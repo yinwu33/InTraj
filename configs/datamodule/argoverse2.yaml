@@ -1,6 +1,6 @@
 _target_: datamodule.AV2Datamodule
 
-data_root: ./data
+data_root: ./data/
 train_split: train
 val_split: val
 test_split: test
@@ -10,6 +10,7 @@ num_workers: 16
 pin_memory: true
 
 preprocess: true
+preprocess_dir: ./data_ssd/cache/
 history_steps: 50
 future_steps: 60
 max_agents: 64

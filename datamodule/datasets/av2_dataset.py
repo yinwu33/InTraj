@@ -26,6 +26,7 @@ class AV2Dataset(Dataset):
         data_root: str,
         split: str = "mini_train",
         preprocess: bool = False,
+        preprocess_dir: str = None,
         history_steps: int = 50,
         future_steps: int = 60,
         max_agents: int = 64,
@@ -52,7 +53,11 @@ class AV2Dataset(Dataset):
 
         # folder under data_root / split
         self.log_dirs = sorted((self.data_root / split).glob("*"))
-        self.cache_dir = self.data_root / "cache" / split
+        self.cache_dir = (
+            self.data_root / "cache" / split
+            if preprocess_dir is None
+            else Path(preprocess_dir)
+        )
         if self.preprocess:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
 

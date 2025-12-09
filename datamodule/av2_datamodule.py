@@ -24,6 +24,7 @@ class AV2Datamodule(pl.LightningDataModule):
         num_workers: int = 4,
         pin_memory: bool = True,
         preprocess: bool = False,
+        preprocess_dir: str = None,
         history_steps: int = 50,
         future_steps: int = 60,
         max_agents: int = 64,
@@ -47,6 +48,7 @@ class AV2Datamodule(pl.LightningDataModule):
         self.pin_memory = pin_memory
 
         self.preprocess = preprocess
+        self.preprocess_dir = preprocess_dir
         self.history_steps = history_steps
         self.future_steps = future_steps
         self.max_agents = max_agents
@@ -64,6 +66,7 @@ class AV2Datamodule(pl.LightningDataModule):
         common_kwargs = dict(
             data_root=self.data_root,
             preprocess=self.preprocess,
+            preprocess_dir=self.preprocess_dir,
             history_steps=self.history_steps,
             future_steps=self.future_steps,
             max_agents=self.max_agents,
@@ -102,7 +105,9 @@ class AV2Datamodule(pl.LightningDataModule):
             if sample["edge_index_lane_to_lane"].numel() > 0:
                 lane_lane_edges.append(sample["edge_index_lane_to_lane"] + lane_offset)
             if sample["edge_index_agent_to_agent"].numel() > 0:
-                agent_agent_edges.append(sample["edge_index_agent_to_agent"] + agent_offset)
+                agent_agent_edges.append(
+                    sample["edge_index_agent_to_agent"] + agent_offset
+                )
             if sample["edge_index_lane_to_agent"].numel() > 0:
                 adjusted = sample["edge_index_lane_to_agent"].clone()
                 adjusted[0, :] += lane_offset
@@ -117,20 +122,46 @@ class AV2Datamodule(pl.LightningDataModule):
             lane_offset += sample["lane_points"].shape[0]
             agent_offset += sample["agent_history"].shape[0]
 
-        def _concat_tensors(tensors: List[torch.Tensor], dim: int = 0, empty_shape=(0,)) -> torch.Tensor:
+        def _concat_tensors(
+            tensors: List[torch.Tensor], dim: int = 0, empty_shape=(0,)
+        ) -> torch.Tensor:
             if len(tensors) == 0:
-                return torch.zeros(empty_shape, dtype=torch.float32 if dim == 0 else torch.long)
+                return torch.zeros(
+                    empty_shape, dtype=torch.float32 if dim == 0 else torch.long
+                )
             return torch.cat(tensors, dim=dim)
 
         batch_dict = {
-            "lane_points": _concat_tensors(lane_points, dim=0, empty_shape=(0, self.lane_points, 2)).float(),
-            "agent_history": _concat_tensors(agent_history, dim=0, empty_shape=(0, self.history_steps, 7)).float(),
-            "edge_index_lane_to_lane": _concat_tensors(lane_lane_edges, dim=1, empty_shape=(2, 0)).long(),
-            "edge_index_agent_to_agent": _concat_tensors(agent_agent_edges, dim=1, empty_shape=(2, 0)).long(),
-            "edge_index_lane_to_agent": _concat_tensors(lane_agent_edges, dim=1, empty_shape=(2, 0)).long(),
-            "target_agent_global_idx": torch.stack(target_indices) if len(target_indices) > 0 else torch.zeros(0, dtype=torch.long),
-            "target_last_pos": torch.stack(target_last_pos) if len(target_last_pos) > 0 else torch.zeros((0, 2)),
-            "target_gt": torch.stack(target_gt) if len(target_gt) > 0 else torch.zeros((0, self.future_steps, 2)),
+            "lane_points": _concat_tensors(
+                lane_points, dim=0, empty_shape=(0, self.lane_points, 2)
+            ).float(),
+            "agent_history": _concat_tensors(
+                agent_history, dim=0, empty_shape=(0, self.history_steps, 7)
+            ).float(),
+            "edge_index_lane_to_lane": _concat_tensors(
+                lane_lane_edges, dim=1, empty_shape=(2, 0)
+            ).long(),
+            "edge_index_agent_to_agent": _concat_tensors(
+                agent_agent_edges, dim=1, empty_shape=(2, 0)
+            ).long(),
+            "edge_index_lane_to_agent": _concat_tensors(
+                lane_agent_edges, dim=1, empty_shape=(2, 0)
+            ).long(),
+            "target_agent_global_idx": (
+                torch.stack(target_indices)
+                if len(target_indices) > 0
+                else torch.zeros(0, dtype=torch.long)
+            ),
+            "target_last_pos": (
+                torch.stack(target_last_pos)
+                if len(target_last_pos) > 0
+                else torch.zeros((0, 2))
+            ),
+            "target_gt": (
+                torch.stack(target_gt)
+                if len(target_gt) > 0
+                else torch.zeros((0, self.future_steps, 2))
+            ),
             "scenario_ids": scenario_ids,
         }
         return batch_dict
