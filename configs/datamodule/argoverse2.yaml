@@ -1,0 +1,20 @@
+_target_: datamodule.AV2Datamodule
+
+data_root: ./data
+train_split: train
+val_split: val
+test_split: test
+
+batch_size: 64
+num_workers: 16
+pin_memory: true
+
+preprocess: true
+history_steps: 50
+future_steps: 60
+max_agents: 64
+max_lanes: 128
+lane_points: 20
+lane_agent_k: 3
+lane_radius: 150.0
+agent_radius: 30.0
