@@ -5,6 +5,8 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 
+from callbacks.viz import TrajectoryVisualizationCallback
+
 
 def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
     callbacks = []
@@ -20,6 +22,9 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
 
     lr_monitor = LearningRateMonitor(logging_interval="step")
     callbacks.append(lr_monitor)
+
+    viz = TrajectoryVisualizationCallback(every_n_epochs=1)
+    callbacks.append(viz)
 
     return callbacks
 
@@ -40,7 +45,7 @@ def main(cfg: DictConfig) -> None:
         )
     else:
         logger = TensorBoardLogger(
-            save_dir=cfg.output_root_dir, 
+            save_dir=cfg.output_root_dir,
             name=f"{cfg.project_name}/{cfg.exp_name}",
         )
 

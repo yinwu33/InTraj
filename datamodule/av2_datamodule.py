@@ -97,10 +97,15 @@ class AV2Datamodule(pl.LightningDataModule):
         target_last_pos = []
         target_gt = []
         scenario_ids = []
+        lane_counts = []
+        agent_counts = []
 
         for sample in batch:
             lane_points.append(sample["lane_points"])
             agent_history.append(sample["agent_history"])
+            
+            lane_counts.append(int(sample["lane_points"].shape[0]))
+            agent_counts.append(int(sample["agent_history"].shape[0]))
 
             if sample["edge_index_lane_to_lane"].numel() > 0:
                 lane_lane_edges.append(sample["edge_index_lane_to_lane"] + lane_offset)
@@ -163,6 +168,8 @@ class AV2Datamodule(pl.LightningDataModule):
                 else torch.zeros((0, self.future_steps, 2))
             ),
             "scenario_ids": scenario_ids,
+            "lane_counts": lane_counts,
+            "agent_counts": agent_counts,
         }
         return batch_dict
 
