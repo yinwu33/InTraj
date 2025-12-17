@@ -13,7 +13,11 @@ class SubgraphEncoder(nn.Module):
     """Encodes individual polylines with a PointNet-style encoder."""
 
     def __init__(
-        self, input_dim: int, hidden_dim: int = 128, output_dim: int = 128, dropout: float = 0.1
+        self,
+        input_dim: int,
+        hidden_dim: int = 128,
+        output_dim: int = 128,
+        dropout: float = 0.1,
     ):
         super().__init__()
         self.point_mlp = nn.Sequential(
@@ -57,7 +61,12 @@ class EdgeGNNLayer(MessagePassing):
             nn.Dropout(dropout),
         )
 
-    def forward(self, node_feat: torch.Tensor, edge_index: torch.Tensor, source_feat: torch.Tensor = None) -> torch.Tensor:
+    def forward(
+        self,
+        node_feat: torch.Tensor,
+        edge_index: torch.Tensor,
+        source_feat: torch.Tensor = None,
+    ) -> torch.Tensor:
         if edge_index.numel() == 0:
             return node_feat
 
@@ -84,8 +93,7 @@ class VectorNetBackbone(nn.Module):
     ):
         super().__init__()
         self.lane_encoder = SubgraphEncoder(2, hidden_dim, hidden_dim, dropout)
-        self.agent_encoder = SubgraphEncoder(
-            7, hidden_dim, hidden_dim, dropout)
+        self.agent_encoder = SubgraphEncoder(7, hidden_dim, hidden_dim, dropout)
         self.global_layers = nn.ModuleList(
             [
                 nn.ModuleDict(
@@ -122,10 +130,8 @@ class VectorNetBackbone(nn.Module):
         agent_feat = self.agent_encoder(agent_points)
 
         for layer in self.global_layers:
-            lane_feat = lane_feat + \
-                layer["lane_lane"](lane_feat, edge_lane_lane)
-            agent_feat = agent_feat + \
-                layer["agent_agent"](agent_feat, edge_agent_agent)
+            lane_feat = lane_feat + layer["lane_lane"](lane_feat, edge_lane_lane)
+            agent_feat = agent_feat + layer["agent_agent"](agent_feat, edge_agent_agent)
             # lanes send messages into agents
             agent_feat = agent_feat + layer["lane_agent"](
                 agent_feat, edge_lane_agent, source_feat=lane_feat
@@ -179,7 +185,7 @@ class MultiModalTrajectoryDecoder(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, k*future_steps * coord_dim),
+            nn.Linear(hidden_dim, k * future_steps * coord_dim),
         )
 
         self.prob_mlp = nn.Sequential(
@@ -193,7 +199,8 @@ class MultiModalTrajectoryDecoder(nn.Module):
         # agent_feat: [B*N]
         out_traj = self.traj_mlp(agent_feat)
         out_traj = out_traj.view(
-            agent_feat.shape[0], self.k, self.future_steps, self.coord_dim)
+            agent_feat.shape[0], self.k, self.future_steps, self.coord_dim
+        )
 
         logits = self.prob_mlp(agent_feat)
 
@@ -205,8 +212,7 @@ class MultiModalTrajectoryDecoder(nn.Module):
         # target: [num_agents, T, 2]
         target_exp = target[:, None, :, :].expand_as(pred)
 
-        per_point = F.smooth_l1_loss(
-            pred, target_exp, reduction="none")  # [n, k, t, 2]
+        per_point = F.smooth_l1_loss(pred, target_exp, reduction="none")  # [n, k, t, 2]
         per_k = per_point.mean(dim=(-1, -2))  # [n, k]
 
         best_k_indices = per_k.argmin(dim=1)  # [n]
@@ -215,14 +221,9 @@ class MultiModalTrajectoryDecoder(nn.Module):
 
         loss_prob = F.cross_entropy(logits, best_k_indices)
 
-        loss = loss_reg + lambda_prob * loss_prob\
+        loss = loss_reg + lambda_prob * loss_prob
 
-
-        return dict(
-            loss_reg=loss_reg,
-            loss_prob=loss_prob,
-            loss=loss
-        )
+        return dict(loss_reg=loss_reg, loss_prob=loss_prob, loss=loss)
 
 
 class VectorNetTrajPred(nn.Module):
@@ -239,9 +240,15 @@ class VectorNetTrajPred(nn.Module):
         self.backbone = VectorNetBackbone(
             hidden_dim=hidden_dim, global_layers=global_layers, dropout=dropout
         )
-        self.decoder = TrajectoryDecoder(
-            hidden_dim=hidden_dim, future_steps=future_steps, dropout=dropout
-        ) if k == 1 else MultiModalTrajectoryDecoder(hidden_dim=hidden_dim, future_steps=future_steps, dropout=dropout, k=k)
+        self.decoder = (
+            TrajectoryDecoder(
+                hidden_dim=hidden_dim, future_steps=future_steps, dropout=dropout
+            )
+            if k == 1
+            else MultiModalTrajectoryDecoder(
+                hidden_dim=hidden_dim, future_steps=future_steps, dropout=dropout, k=k
+            )
+        )
 
     def forward(self, batch: dict) -> torch.Tensor:
         lane_feat, agent_feat = self.backbone(
