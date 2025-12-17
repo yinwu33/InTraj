@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.nn import MessagePassing
 
 
 class SubgraphEncoder(nn.Module):
@@ -38,11 +39,9 @@ class SubgraphEncoder(nn.Module):
         return self.polyline_mlp(x)
 
 
-class EdgeGNNLayer(nn.Module):
-    """Message passing layer using averaged neighbor aggregation."""
-
-    def __init__(self, hidden_dim: int, dropout: float = 0.1):
-        super().__init__()
+class EdgeGNNLayer(MessagePassing):
+    def __init__(self, hidden_dim: int, dropout: float = 0.1, aggr: str = "mean"):
+        super().__init__(aggr=aggr)
         self.update_mlp = nn.Sequential(
             nn.LazyLinear(hidden_dim),
             nn.ReLU(),
@@ -51,28 +50,20 @@ class EdgeGNNLayer(nn.Module):
             nn.Dropout(dropout),
         )
 
-    def forward(
-        self,
-        node_feat: torch.Tensor,
-        edge_index: torch.Tensor,
-        source_feat: torch.Tensor = None,
-    ) -> torch.Tensor:
+    def forward(self, node_feat: torch.Tensor, edge_index: torch.Tensor, source_feat: torch.Tensor = None) -> torch.Tensor:
         if edge_index.numel() == 0:
             return node_feat
 
-        src, dst = edge_index
         source = node_feat if source_feat is None else source_feat
 
-        agg = torch.zeros_like(node_feat)
-        agg.index_add_(0, dst, source[src])
+        return self.propagate(edge_index, x=(source, node_feat), x_dst=node_feat)
 
-        deg = torch.zeros(
-            node_feat.shape[0], device=node_feat.device, dtype=node_feat.dtype
-        )
-        deg.index_add_(0, dst, torch.ones_like(dst, dtype=node_feat.dtype))
-        agg = agg / deg.clamp_min(1.0).unsqueeze(-1)
+    def message(self, x_j):
+        return super().message(x_j)
 
-        return self.update_mlp(torch.cat([node_feat, agg], dim=-1))
+    def update(self, aggr_out, x_dst):
+        out = self.update_mlp(torch.cat([x_dst, aggr_out], dim=-1))
+        return out
 
 
 class VectorNetBackbone(nn.Module):
