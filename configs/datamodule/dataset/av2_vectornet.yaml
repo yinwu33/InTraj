@@ -1,0 +1,11 @@
+data_root: ./data/
+preprocess: true
+preprocess_dir: ./cache/
+history_steps: 50
+future_steps: 60
+max_agents: 64
+max_lanes: 128
+lane_points: 20
+lane_agent_k: 3
+lane_radius: 150.0
+agent_radius: 30.0

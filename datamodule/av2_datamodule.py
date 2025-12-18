@@ -6,6 +6,7 @@ from typing import Dict, List
 import pytorch_lightning as pl
 import torch
 from hydra.utils import to_absolute_path
+from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
 from .datasets.av2 import AV2VectorNetDataset
@@ -16,28 +17,15 @@ class AV2Datamodule(pl.LightningDataModule):
 
     def __init__(
         self,
-        data_root: str,
+        dataset: OmegaConf,
         train_split: str = "train",
         val_split: str = "val",
         test_split: str = "test",
         batch_size: int = 4,
         num_workers: int = 4,
         pin_memory: bool = True,
-        preprocess: bool = False,
-        preprocess_dir: str = None,
-        history_steps: int = 50,
-        future_steps: int = 60,
-        max_agents: int = 64,
-        max_lanes: int = 128,
-        lane_points: int = 20,
-        lane_agent_k: int = 3,
-        lane_radius: float = 150.0,
-        agent_radius: float = 30.0,
     ):
         super().__init__()
-        self.data_root = Path(to_absolute_path(data_root))
-        if not self.data_root.exists():
-            raise FileNotFoundError(f"{data_root} not found")
 
         self.train_split = train_split
         self.val_split = val_split
@@ -47,35 +35,14 @@ class AV2Datamodule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.pin_memory = pin_memory
 
-        self.preprocess = preprocess
-        self.preprocess_dir = preprocess_dir
-        self.history_steps = history_steps
-        self.future_steps = future_steps
-        self.max_agents = max_agents
-        self.max_lanes = max_lanes
-        self.lane_points = lane_points
-        self.lane_agent_k = lane_agent_k
-        self.lane_radius = lane_radius
-        self.agent_radius = agent_radius
+        self.dataset_cfg = dataset
 
-        self.train_dataset: AV2VectorNetDataset | None = None
-        self.val_dataset: AV2VectorNetDataset | None = None
-        self.test_dataset: AV2VectorNetDataset | None = None
+        self.train_dataset = None
+        self.val_dataset = None
+        self.test_dataset = None
 
     def setup(self, stage: str | None = None):
-        common_kwargs = dict(
-            data_root=self.data_root,
-            preprocess=self.preprocess,
-            preprocess_dir=self.preprocess_dir,
-            history_steps=self.history_steps,
-            future_steps=self.future_steps,
-            max_agents=self.max_agents,
-            max_lanes=self.max_lanes,
-            lane_points=self.lane_points,
-            lane_agent_k=self.lane_agent_k,
-            lane_radius=self.lane_radius,
-            agent_radius=self.agent_radius,
-        )
+        common_kwargs = OmegaConf.to_container(self.dataset_cfg, resolve=True)
 
         if stage in ("fit", None):
             self.train_dataset = AV2VectorNetDataset(

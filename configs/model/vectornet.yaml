@@ -3,5 +3,5 @@ _target_: models.VectorNet
 hidden_dim: 512
 global_layers: 3
 dropout: 0.1
-future_steps: ${datamodule.future_steps}
+future_steps: ${datamodule.dataset.future_steps}
 k: 6
