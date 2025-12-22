@@ -833,6 +833,8 @@ class Simpl(nn.Module):
         self.fusion_net = FusionNet(fusion_net_cfg)
         self.pred_net = MLPDecoder(mlp_decoder_cfg)
         self.loss = LossFunc(loss_cfg)
+        
+        self.k = mlp_decoder_cfg.k
 
         self.apply(init_weights)
 
