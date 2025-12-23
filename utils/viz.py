@@ -6,296 +6,194 @@ import torch
 import numpy as np
 
 import matplotlib
+
 matplotlib.use("Agg")  # safe headless backend for dataloader forks
 
 
-def _to_numpy(arr: torch.Tensor | np.ndarray | None) -> Optional[np.ndarray]:
-    if arr is None:
-        return None
-    if isinstance(arr, torch.Tensor):
-        return arr.detach().cpu().numpy()
-    return np.asarray(arr)
+from utils.numpy import to_numpy
+
+_COLOR_MAP = {
+    # agent: history, future, last_position
+    # blue, green, red series
+    "focal": ["#1f77b4", "#2ca02c", "#d62728"],
+    "ego": ["#17becf", "#98df8a", "#d62728"],
+    "other": ["#7f7f7f", "#9ed9a0", "#f7b6d2"],
+    "lane": "#c7c7c7",
+}
 
 
 def plot_scenario(
     lane_points: torch.Tensor | np.ndarray,
     agent_history: torch.Tensor | np.ndarray,
+    agent_future: torch.Tensor | np.ndarray,
+    agent_history_mask: torch.Tensor | np.ndarray,
+    agent_future_mask: torch.Tensor | np.ndarray,
+    agent_last_pos: torch.Tensor | np.ndarray,
     target_agent_idx: int,
-    target_last_pos: torch.Tensor | np.ndarray | None = None,
-    target_gt: torch.Tensor | np.ndarray | None = None,
-    prediction: torch.Tensor | np.ndarray | None = None,
-    probabilities: torch.Tensor | None = None,
-    other_future: torch.Tensor | np.ndarray | None = None,
-    other_future_mask: torch.Tensor | np.ndarray | None = None,
-    other_prediction: torch.Tensor | np.ndarray | None = None,
-    agent_last_pos: torch.Tensor | np.ndarray | None = None,
+    preds: torch.Tensor | np.ndarray | None = None,
+    probs: torch.Tensor | None = None,
     scenario_id: str | None = None,
     view_radius: float = 80.0,
     k: int = 1,
 ):
     """Plot lanes, agent history, target future ground truth, and prediction."""
 
-    lane_points_np = _to_numpy(lane_points)
-    agent_history_np = _to_numpy(agent_history)
-    target_last_pos_np = _to_numpy(target_last_pos)
-    target_gt_np = _to_numpy(target_gt)
-    pred_np = _to_numpy(prediction)
-    prob_np = _to_numpy(probabilities)
-    other_future_np = _to_numpy(other_future)
-    other_future_mask_np = _to_numpy(other_future_mask)
-    other_pred_np = _to_numpy(other_prediction)
-    agent_last_np = _to_numpy(agent_last_pos)
+    lane_points_np = to_numpy(lane_points)  # (num_lanes, num_points, 2)
+    agent_history_np = to_numpy(agent_history)  # (num_agents, hist_len, 7)
+    agent_future_np = to_numpy(agent_future)  # (num_agents, fut_len, 2)
+    agnet_history_mask_np = to_numpy(agent_history_mask)  # (num_agents, hist_len)
+    agent_future_mask_np = to_numpy(agent_future_mask)  # (num_agents, fut_len)
+    agent_last_pos_np = to_numpy(agent_last_pos)  # (num_agents, 2)
+    preds_np = to_numpy(preds) if preds is not None else None
+    probs_np = to_numpy(probs) if probs is not None else None
 
     fig, ax = plt.subplots(figsize=(6, 6))
 
-    # Map polylines
-    for lane in lane_points_np:
-        ax.plot(lane[:, 0], lane[:, 1], color="#c7c7c7",
-                linewidth=1.0, zorder=0)
+    ax = _plot_lanes(ax, lane_points_np)
 
-    # Agent histories
-    obs_mask = agent_history_np[:, :, 6] > 0.5
-    for idx, seq in enumerate(agent_history_np):
-        mask = obs_mask[idx]
-        if not mask.any():
-            continue
-        coords = seq[mask, :2]
+    for idx in range(agent_history_np.shape[0]):
+        agent_type = "other"
+        agent_label = None
         if idx == target_agent_idx:
-            ax.plot(
-                coords[:, 0],
-                coords[:, 1],
-                color="#1f77b4",
-                linewidth=2.0,
-                label="target history",
-            )
-            ax.scatter(
-                coords[-1, 0],
-                coords[-1, 1],
-                color="#1f77b4",
-                s=20,
-                zorder=5,
-            )
+            agent_type = "focal"
+            agent_label = "focal"
+        elif idx == 1:
+            agent_type = "ego"
+            agent_label = "ego"
         else:
-            ax.plot(
-                coords[:, 0],
-                coords[:, 1],
-                color="#7f7f7f",
-                linewidth=1.0,
-                alpha=0.7,
-            )
-            ax.scatter(
-                coords[-1, 0],
-                coords[-1, 1],
-                color="#7f7f7f",
-                s=8,
-                alpha=0.8,
-                zorder=4,
-            )
-
-    # Future ground truth
-    if target_gt_np is not None:
-        gt_coords = target_gt_np
-        if target_last_pos_np is not None:
-            gt_coords = np.vstack([target_last_pos_np[None, :], gt_coords])
-        ax.plot(
-            gt_coords[:, 0],
-            gt_coords[:, 1],
-            color="#2ca02c",
-            linewidth=2.0,
-            label="target future",
+            agent_type = "other"
+            agent_label = None
+        ax = _plot_agent(
+            ax,
+            agent_history_np[idx],
+            agent_future_np[idx],
+            agnet_history_mask_np[idx],
+            agent_future_mask_np[idx],
+            agent_last_pos_np[idx],
+            color_map=_COLOR_MAP[agent_type],
+            label=agent_label,
         )
-        ax.scatter(gt_coords[-1, 0], gt_coords[-1, 1], color="#2ca02c", s=25)
 
-    # Model prediction
-    # pred_np.shape [t, 2]
-    # pred_np.shape [k, t, 2]
-    # pred_np.shape [n, k, t, 2]
-    # pred_np.shape [n, t, 2]
-    if pred_np is not None:
-        target_preds = []  # each is [t, 2]
-        target_probs = []
-        if k == 1:
-            # single modal
-            if pred_np.ndim == 2:
-                # [t, 2]
-                target_preds.append(pred_np)
-                target_probs.append(1.)
-            else:
-                # pred_np.ndim == 3 [n, t, 2]
-                target_preds.append(pred_np[target_agent_idx])
-                target_probs.append(prob_np[target_agent_idx])
-        else:
-            # multi modal
-            if pred_np.ndim == 4:
-                # [n, k, t, 2]
-                target_preds = [i for i in pred_np[target_agent_idx]]
-                target_probs = [i for i in prob_np[target_agent_idx]]
-            else:
-                # [k, t, 2]
-                target_preds = [i for i in pred_np]
-                target_probs = [i for i in prob_np]
-
-        # Plot up to max_modes_to_plot predictions
-        for target_pred, target_prob in zip(target_preds, target_probs):
-            pred_coords = target_pred
-            pred_prob = float(target_prob)
-
-            if target_last_pos_np is not None:
-                pred_coords = np.vstack(
-                    [target_last_pos_np[None, :], pred_coords])
-
-            ax.plot(
-                pred_coords[:, 0],
-                pred_coords[:, 1],
-                color="#d62728",
-                linestyle="--",
-                linewidth=2.0,
-                alpha=pred_prob,
-            )
-            ax.scatter(pred_coords[-1, 0],
-                       pred_coords[-1, 1],
-                       color="#d62728",
-                       s=25,
-                       zorder=3,
-                       )
-
-    # Other agents future GT (lighter)
-    if other_future_np is not None and other_future_np.ndim == 3:
-        plotted = False
-        for idx in range(other_future_np.shape[0]):
+    # plot predictions
+    if preds_np.ndim == 4:
+        # [n, k, t, 2]
+        for idx in range(agent_history_np.shape[0]):
+            agent_type = "other"
             if idx == target_agent_idx:
-                continue
-            traj = other_future_np[idx]
-            if other_future_mask_np is not None and other_future_mask_np.shape[0] > idx:
-                mask = other_future_mask_np[idx] > 0.5
-                if mask.any():
-                    traj = traj[mask]
-                else:
-                    continue
-            if traj.shape[0] == 0:
-                continue
-            start = (
-                agent_last_np[idx]
-                if agent_last_np is not None and agent_last_np.shape[0] > idx
-                else None
+                agent_type = "focal"
+            else:
+                agent_type = "other"
+            ax = _plot_predictions(
+                ax,
+                preds_np[idx],
+                probs_np[idx] if probs_np is not None else None,
+                max_k=k,
+                color_map=_COLOR_MAP[agent_type],
             )
-            if start is not None:
-                traj = np.vstack([start[None, :], traj])
-            ax.plot(
-                traj[:, 0],
-                traj[:, 1],
-                color="#9ed9a0",
-                linewidth=1.2,
-                alpha=0.9,
-                label="others future" if not plotted else None,
-            )
-            # ax.scatter(
-            #     traj[-1, 0],
-            #     traj[-1, 1],
-            #     color="#9ed9a0",
-            #     s=25,
-            # )
-            plotted = True
+    elif preds_np.ndim == 3:
+        # [k, t, 2]
+        ax = _plot_predictions(
+            ax,
+            preds_np,
+            probs_np if probs_np is not None else None,
+            max_k=k,
+            color_map=_COLOR_MAP["focal"],
+        )
 
-    # Other agents predictions (lighter)
-    if other_pred_np is not None and other_pred_np.ndim >= 3:
-        plotted = False
-        num_agents = other_pred_np.shape[0]
-        for idx in range(num_agents):
-            if idx == target_agent_idx:
-                continue
-            traj = other_pred_np[idx]
-            if traj.ndim == 3:  # has mode dimension
-                traj = traj[0]
-            start = (
-                agent_last_np[idx]
-                if agent_last_np is not None and agent_last_np.shape[0] > idx
-                else None
-            )
-            if start is not None:
-                traj = np.vstack([start[None, :], traj])
-            ax.plot(
-                traj[:, 0],
-                traj[:, 1],
-                color="#f7b6d2",
-                linestyle="--",
-                linewidth=1.2,
-                alpha=0.9,
-                label="others pred" if not plotted else None,
-            )
-            plotted = True
+    # if target_last_pos_np is not None:
+    cx, cy = agent_last_pos_np[target_agent_idx]
 
-    if target_last_pos_np is not None:
-        cx, cy = target_last_pos_np
-        ax.set_xlim(cx - view_radius, cx + view_radius)
-        ax.set_ylim(cy - view_radius, cy + view_radius)
+    ax.set_xlim(cx - view_radius, cx + view_radius)
+    ax.set_ylim(cy - view_radius, cy + view_radius)
 
     ax.set_aspect("equal", adjustable="box")
-    title = "Scenario visualization"
+
     if scenario_id is not None:
-        title += f" ({scenario_id})"
-    ax.set_title(title)
+        title = f"Log: {scenario_id}"
+        ax.set_title(title)
+
     ax.legend(loc="upper right")
     ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.5)
     fig.tight_layout()
     return fig
 
 
-def _plot_map(
-    lane_points: torch.Tensor | np.ndarray,
-    view_center: torch.Tensor | np.ndarray | None = None,
-    view_radius: float = 80.0,
+def _plot_lanes(
+    ax: plt.Axes,
+    lane_points_np: np.ndarray,
 ):
-    lane_points_np = _to_numpy(lane_points)
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-
     # Map polylines
     for lane in lane_points_np:
-        ax.plot(lane[:, 0], lane[:, 1], color="#c7c7c7",
-                linewidth=1.0, zorder=0)
+        ax.plot(
+            lane[:, 0], lane[:, 1], color=_COLOR_MAP["lane"], linewidth=1.0, zorder=0
+        )
 
-    if view_center is not None:
-        view_center_np = _to_numpy(view_center)
-        cx, cy = view_center_np
-        ax.set_xlim(cx - view_radius, cx + view_radius)
-        ax.set_ylim(cy - view_radius, cy + view_radius)
+    return ax
 
-    ax.set_aspect("equal", adjustable="box")
-    ax.set_title("Map visualization")
-    ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.5)
-    fig.tight_layout()
-    return fig
 
 def _plot_agent(
-    agent_history: torch.Tensor | np.ndarray,
+    ax: plt.Axes,
+    agent_history_np: np.ndarray,
+    agent_future_np: np.ndarray,
+    agent_history_mask_np: np.ndarray,
+    agent_future_mask_np: np.ndarray,
+    agent_last_pos_np: np.ndarray,
+    color_map: Optional[dict] = _COLOR_MAP["other"],
+    label: Optional[str] = None,
 ):
-    agent_history_np = _to_numpy(agent_history)
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    traj_history = agent_history_np[agent_history_mask_np]
+    traj_future = agent_future_np[agent_future_mask_np]
 
-    # Agent histories
-    obs_mask = agent_history_np[:, 6] > 0.5
-    coords = agent_history_np[obs_mask, :2]
-    if obs_mask.any():
+    ax.plot(
+        traj_history[:, 0],
+        traj_history[:, 1],
+        color=color_map[0],
+        linewidth=1.0,
+        label=f"{label} history" if label is not None else None,
+    )
+    ax.plot(
+        traj_future[:, 0],
+        traj_future[:, 1],
+        color=color_map[1],
+        linewidth=1.0,
+        label=f"{label} future" if label is not None else None,
+    )
+    ax.scatter(
+        agent_last_pos_np[0],
+        agent_last_pos_np[1],
+        color=color_map[2],
+        s=10,
+    )
+    return ax
+
+
+def _plot_predictions(
+    ax: plt.Axes,
+    preds_np: np.ndarray,
+    probs_np: np.ndarray,
+    max_k: int | None = None,
+    color_map: Optional[dict] = _COLOR_MAP["other"],
+):
+    # preds_np.shape [k, t, 2]
+    # probs_np.shape [k]
+    k = preds_np.shape[0]
+    color = color_map[2]
+
+    if max_k is not None and max_k < k:
+        sorted_indices = np.argsort(-probs_np)  # descending
+        selected_indices = sorted_indices[:max_k]
+        preds_np = preds_np[selected_indices]
+        probs_np = probs_np[selected_indices]
+
+    for pred_coords, pred_prob in zip(preds_np, probs_np):
         ax.plot(
-            coords[:, 0],
-            coords[:, 1],
-            color="#1f77b4",
-            linewidth=2.0,
-            label="agent history",
-        )
-        ax.scatter(
-            coords[-1, 0],
-            coords[-1, 1],
-            color="#1f77b4",
-            s=20,
-            zorder=5,
+            pred_coords[:, 0],
+            pred_coords[:, 1],
+            color=color,
+            linestyle="-",
+            linewidth=1.5,
+            alpha=pred_prob,
         )
 
-    ax.set_aspect("equal", adjustable="box")
-    ax.set_title("Agent history visualization")
-    ax.legend(loc="upper right")
-    ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.5)
-    fig.tight_layout()
-    return fig
+    return ax
