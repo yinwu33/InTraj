@@ -105,7 +105,6 @@ class VectorNetLightningModule(pl.LightningModule):
         return torch.optim.Adam(self.model.parameters(), lr=self.lr)
 
     def create_scenario(self, batch, outputs, index: int = 0):
-
         def _detach(tensor: torch.Tensor) -> torch.Tensor:
             return tensor.detach().cpu()
 
@@ -137,16 +136,13 @@ class VectorNetLightningModule(pl.LightningModule):
         return {
             "lane_points": _detach(batch["lane_points"][lane_start:lane_end]),
             "agent_history": _detach(batch["agent_history"][agent_start:agent_end]),
-            "target_agent_idx": target_agent_idx,
-            "target_last_pos": _detach(batch["target_last_pos"][index]),
-            "target_gt": _detach(batch["target_gt"][index]),
-            "prediction": prediction,
-            "probabilities": probabilities,
-            "other_future": _detach(batch["agent_future"][agent_start:agent_end]),
-            "other_future_mask": _detach(
-                batch["agent_future_mask"][agent_start:agent_end]
-            ),
+            "agent_future": _detach(batch["agent_future"][agent_start:agent_end]),
+            "agent_history_mask": _detach(batch["agent_history_mask"][agent_start:agent_end]),
+            "agent_future_mask": _detach(batch["agent_future_mask"][agent_start:agent_end]),
             "agent_last_pos": _detach(batch["agent_last_pos"][agent_start:agent_end]),
-            "other_prediction": other_prediction,
+            "target_agent_idx": target_agent_idx,
+            "preds": prediction,
+            "probs": probabilities,
             "scenario_id": scenario_id,
+            "k": self.model.k,
         }
