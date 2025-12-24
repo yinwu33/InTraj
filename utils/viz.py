@@ -40,18 +40,23 @@ def plot_scenario(
 
     lane_points_np = to_numpy(lane_points)  # (num_lanes, num_points, 2)
     agent_history_np = to_numpy(agent_history)  # (num_agents, hist_len, 7)
-    agent_future_np = to_numpy(agent_future)  # (num_agents, fut_len, 2)
     agnet_history_mask_np = to_numpy(agent_history_mask)  # (num_agents, hist_len)
+    agent_future_np = to_numpy(agent_future)  # (num_agents, fut_len, 2)
     agent_future_mask_np = to_numpy(agent_future_mask)  # (num_agents, fut_len)
     agent_last_pos_np = to_numpy(agent_last_pos)  # (num_agents, 2)
     preds_np = to_numpy(preds) if preds is not None else None
     probs_np = to_numpy(probs) if probs is not None else None
 
+    valid_agents = agnet_history_mask_np.any(-1)
+    valid_indices = np.where(valid_agents)[0]
+    num_agents = valid_agents.sum()
+    agent_history_np = agent_history_np[valid_agents]
+
     fig, ax = plt.subplots(figsize=(6, 6))
 
     ax = _plot_lanes(ax, lane_points_np)
 
-    for idx in range(agent_history_np.shape[0]):
+    for idx in valid_indices:
         agent_type = "other"
         agent_label = None
         if idx == target_agent_idx:
@@ -77,7 +82,7 @@ def plot_scenario(
     # plot predictions
     if preds_np.ndim == 4:
         # [n, k, t, 2]
-        for idx in range(agent_history_np.shape[0]):
+        for idx in range(num_agents):
             agent_type = "other"
             if idx == target_agent_idx:
                 agent_type = "focal"

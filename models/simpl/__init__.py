@@ -19,7 +19,7 @@ class SimplLightningModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
 
-        num_agents = batch["agent_feats"].shape[1]
+        num_agents = batch["agent_history"].shape[1]
         num_lanes = batch["lane_feats"].shape[1]
 
         self.log(
@@ -110,29 +110,9 @@ class SimplLightningModule(pl.LightningModule):
         prob = out_post["prob_pred"]
 
         return pred, prob
-    
+
     def create_scenario(self, batch, outputs, index: int = 0):
-        """
-        batch: dict
-        agent_feats: (b, n_agent_max, dim, t)
-        agent_masks: (b, n_agent_max)
-        lane_feats: (b, n_lane_max, dim, t)
-        lane_masks: (b, n_lane_max)
-        "TRAJS_FUT": (b, n_agent_max, future_len, 2)
-        "PAD_FUT": (b, n_agent_max, future_len)
-        
-        return dict:
-        lane_points: tensor, (num_lanes, num_points, 2)
-        agent_history: tensor, (num_agents, hist_len, feat_dim)
-        target_agent_idx: int
-        target_last_pos: tensor, (2,)
-        target_gt: tensor, (future_len, 2)
-        prediction: tensor, (k, future_len, 2)
-        other_future: tensor, (num_agents, future_len, 2) or None
-        other_future_mask: tensor, (num_agents, future_len) or None
-        other_prediction: tensor, (num_agents, k, future_len, 2) or None
-        agent_last_pos: tensor, (num_agents, 2) or None
-        """
+
         def _detach(x):
             if x is None:
                 return None
@@ -144,92 +124,67 @@ class SimplLightningModule(pl.LightningModule):
         res_cls, res_reg, _ = out
 
         # gather current sample
-        agent_inputs = batch["agent_feats"][index]  # (num_agents, feat_dim, hist_len)
-        agent_mask = batch["agent_masks"][index].bool()
-        lane_inputs = batch["lane_feats"][index]
+        lane_feats = batch["lane_feats"][index]
         lane_mask = batch["lane_masks"][index].bool()
+        lane_ctrs = batch["lane_ctrs"][index]
+        lane_vecs = batch["lane_vecs"][index]
 
-        # keep only valid agents/lanes
-        agent_inputs = agent_inputs[agent_mask]
-        lane_inputs = lane_inputs[lane_mask]
+        agent_history = batch["agent_history"][index]  # (num_agents, 50-2, 14)
+        agent_history_mask = batch["agent_history_mask"][index].bool()  # (na, 50-2)
+        agent_future_pos = batch["agent_future_pos"][index]
+        agent_future_mask = batch["agent_future_mask"][index].bool()
 
-        # future GT and masks
-        future = batch["TRAJS_POS_FUT"][index]
-        future_mask = batch["PAD_FUT"][index].bool()
-        train_mask = batch.get("TRAIN_MASK", None)
-        if train_mask is not None:
-            train_mask = train_mask[index].bool()
+        agent_last_pos = batch["agent_last_pos"][index]
 
-        # predictions (model outputs are already softmaxed)
-        sample_cls = res_cls[index] if res_cls is not None else None
-        sample_reg = res_reg[index] if res_reg is not None else None
-        prediction = sample_reg[0] if sample_reg is not None else None
-        probabilities = sample_cls[0] if sample_cls is not None else None
-        other_prediction = sample_reg
+        # gathre predictions
+        preds = res_reg[index]  # (num_agents, k, fut_len, 2)
+        logits = res_cls[index]  # (num_agents, k)
+        probs = torch.softmax(logits, dim=1)  # (num_agents, k)
+        focal_agent_idx = 0
+        ego_agent_idx = 1
 
-        # align auxiliary tensors to number of agents kept
-        num_agents = agent_inputs.shape[0]
-        future = future[:num_agents]
-        future_mask = future_mask[:num_agents]
-        if train_mask is not None:
-            train_mask = train_mask[:num_agents]
-        if other_prediction is not None:
-            other_prediction = other_prediction[:num_agents]
-
-        # reconstruct agent history in VectorNet viz format [x, y, vx, vy, sin, cos, mask]
-        hist_len = agent_inputs.shape[-1]
-        agent_history = agent_inputs.new_zeros((num_agents, hist_len, 7))
-        agent_last_pos = agent_inputs.new_zeros((num_agents, 2))
-        dt = 0.1  # AV2 timestep
-
-        for i in range(num_agents):
-            feats = agent_inputs[i]  # (feat_dim, hist_len)
-            disp = feats[0:2]  # (2, hist_len), pos_t - pos_{t-1}
-            vel = feats[4:6].T  # (hist_len, 2)
-            yaw_cos = feats[2]
-            yaw_sin = feats[3]
-            obs_mask = feats[-1] > 0.5
-
-            fut_i = future[i] if future is not None else None
-            fut_mask_i = future_mask[i] if future_mask is not None else None
-            if fut_i is not None:
-                valid_future = fut_mask_i if fut_mask_i.dtype == torch.bool else fut_mask_i > 0.5
-                if valid_future.any():
-                    first_valid_idx = int(torch.nonzero(valid_future, as_tuple=False)[0])
-                else:
-                    first_valid_idx = 0
-                anchor_pos = fut_i[first_valid_idx]
-            else:
-                anchor_pos = disp.new_zeros(2)
-
-            # refine anchor with last observed velocity to approximate last obs position
-            anchor_pos = anchor_pos - feats[4:6, -1] * dt
-
-            pos_seq = feats.new_zeros((hist_len, 2))
-            pos_seq[-1] = anchor_pos
-            for t in range(hist_len - 1, 0, -1):
-                pos_seq[t - 1] = pos_seq[t] - disp[:, t]
-
-            agent_history[i, :, 0:2] = pos_seq
-            agent_history[i, :, 2:4] = vel
-            agent_history[i, :, 4] = yaw_sin
-            agent_history[i, :, 5] = yaw_cos
-            agent_history[i, :, 6] = obs_mask.float()
-            agent_last_pos[i] = pos_seq[-1]
+        cum = torch.cumsum(agent_history[:, :, :2], dim=1)  # (N,T, 2)
+        agent_first_pos = agent_last_pos - cum[:, -1, :]
+        agent_history_pos = cum + agent_first_pos[:, None, :]
 
         target_agent_idx = 0  # focal agent is first by construction
 
+        # recover lane points for viz
+        lane_points = []
+        # lane_inputs: (num_lane_segments, num_points_per_lane, 16)
+        # 16: node_ctrs(2), node_vecs(2), intersect(1), lane_type(3)
+        # cross_left(3), cross_right(3), left_nb(1), right_nb(1)
+        for i in range(lane_feats.shape[0]):
+            feats = lane_feats[i]  # (N, 16)
+            lane_ctr = lane_ctrs[i]  # (2,)
+            lane_vec = lane_vecs[i]  # (2,)
+
+            node_ctrs_local = feats[:, 0:2]  # (N, 2)
+
+            vx, vy = lane_vec[0], lane_vec[1]
+            R = torch.stack(
+                [
+                    torch.stack([vx, -vy]),
+                    torch.stack([vy, vx]),
+                ],
+                dim=0,
+            )  # (2, 2)
+
+            node_ctrs_scene = node_ctrs_local @ R.T + lane_ctr[None, :]  # (N, 2)
+            lane_points.append(node_ctrs_scene)
+        lane_points = torch.stack(lane_points, dim=0)  # (num_lanes, num_points, 2)
+
         return {
-            "lane_points": _detach(lane_inputs[..., :2]),
-            "agent_history": _detach(agent_history),
-            "target_agent_idx": target_agent_idx,
-            "target_last_pos": _detach(agent_history[target_agent_idx, -1, :2]),
-            "target_gt": _detach(future[target_agent_idx]),
-            "prediction": _detach(prediction),
-            "probabilities": _detach(probabilities),
-            "other_future": _detach(future),
-            "other_future_mask": _detach(future_mask),
+            "lane_points": lane_points,
+            "agent_history": _detach(agent_history_pos),
+            "agent_future": _detach(agent_future_pos),
+            "agent_history_mask": _detach(agent_history_mask.bool()),
+            "agent_future_mask": _detach(agent_future_mask.bool()),
             "agent_last_pos": _detach(agent_last_pos),
-            "other_prediction": _detach(other_prediction),
-            "scenario_id": None,
+            "target_agent_idx": target_agent_idx,
+            "preds": _detach(preds),
+            "probs": _detach(probs),
+            "scenario_id": batch["scenario_id"][index],
+            "k": self.model.k,
         }
+

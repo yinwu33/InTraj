@@ -47,8 +47,8 @@ class AV2VectorNetDataset(Dataset):
 
         self.data_root = Path(data_root)
         self.split = split
-
         self.preprocess = preprocess
+
         self.history_steps = history_steps
         self.future_steps = future_steps
         self.max_agents = max_agents
@@ -79,14 +79,14 @@ class AV2VectorNetDataset(Dataset):
                 return sample
             except Exception:
                 print(f"Warning: failed to load cache file {cache_file}, rebuilding...")
-        
+
         # * build sample from raw files
-        sample = self._build_sample(log_id, log_dir)
+        sample = self._build_from_raw(log_id, log_dir)
         if cache_file is not None:
             torch.save(sample, cache_file)
         return sample
 
-    def _build_sample(self, log_id: str, log_dir: Path) -> dict:
+    def _build_from_raw(self, log_id: str, log_dir: Path) -> dict:
         json_file = log_dir / f"log_map_archive_{log_id}.json"
         parquet_file = log_dir / f"scenario_{log_id}.parquet"
         if not json_file.exists():
@@ -178,7 +178,7 @@ class AV2VectorNetDataset(Dataset):
             [focal_idx, ego_idx] + scored_idcs + unscored_idcs + fragment_idcs
         )
         sorted_categories = (
-            ["focal", "ego"]
+            ["focal", "av"]
             + ["score"] * len(scored_idcs)
             + ["unscore"] * len(unscored_idcs)
             + ["fragment"] * len(fragment_idcs)

@@ -775,45 +775,6 @@ class MLPDecoder(nn.Module):
         return res_cls, res_reg, res_aux
 
 
-# class RPEEmbedding(nn.Module):
-#     def __init__(self, radius: float = 100):
-#         super().__init__()
-
-#         self.radius = radius
-
-#     def forward(self, traj_ctrs, traj_vecs, lane_ctrs, lane_vecs):
-#         ctrs = torch.cat([traj_ctrs, lane_ctrs], dim=0)
-#         vecs = torch.cat([traj_vecs, lane_vecs], dim=0)
-
-#         # distance encoding
-#         d_pos = (ctrs.unsqueeze(0) - ctrs.unsqueeze(1)).norm(dim=-1)
-#         d_pos = d_pos * 2 / self.radius  # scale [0, radius] to [0, 2]
-#         pos_rpe = d_pos.unsqueeze(0)
-
-#         v_edge = vecs.unsqueeze(0)  # [1, N, 2]
-#         v_edge_t = vecs.unsqueeze(1)  # [N, 1, 2]
-#         v_rel = ctrs.unsqueeze(0) - ctrs.unsqueeze(1)  # [N, N, 2]
-
-#         cos_a1 = self.get_cos(v_edge, v_edge_t)
-#         sin_a1 = self.get_sin(v_edge, v_edge_t)
-#         cos_a2 = self.get_cos(v_edge, v_rel)
-#         sin_a2 = self.get_sin(v_edge, v_rel)
-
-#         ang_rpe = torch.stack([cos_a1, sin_a1, cos_a2, sin_a2])
-#         rpe = torch.cat([ang_rpe, pos_rpe], dim=0)
-#         return rpe
-
-#     @staticmethod
-#     def get_cos(v1, v2):
-#         return (v1 * v2).sum(dim=-1) / (v1.norm(dim=-1) * v2.norm(dim=-1) + 1e-10)
-
-#     @staticmethod
-#     def get_sin(v1, v2):
-#         return (v1[..., 0] * v2[..., 1] - v1[..., 1] * v2[..., 0]) / (
-#             v1.norm(dim=-1) * v2.norm(dim=-1) + 1e-10
-#         )
-
-
 class Simpl(nn.Module):
     # Initialization
     def __init__(
@@ -833,18 +794,19 @@ class Simpl(nn.Module):
         self.fusion_net = FusionNet(fusion_net_cfg)
         self.pred_net = MLPDecoder(mlp_decoder_cfg)
         self.loss = LossFunc(loss_cfg)
-        
+
         self.k = mlp_decoder_cfg.k
 
         self.apply(init_weights)
 
     def forward(self, data):
         # actors, actor_idcs, lanes, lane_idcs, rpe = data
-        agent_inputs = data["agent_feats"]  # [B, Nmax, D, T]
-        agent_masks = data["agent_masks"]  # [B, Nmax]
+        agent_inputs = data["agent_history"].permute([0, 1, 3, 2])  # [B, Nmax, D, T]
+        agent_history_masks = data["agent_history_mask"]  # [B, Nmax]
+        agent_masks = agent_history_masks.any(dim=-1)  # [B, Nmax]
         lane_inputs = data["lane_feats"]  # [B, Nmax, 10, 16]
         lane_masks = data["lane_masks"]  # [B, Nmax]
-        rpe_list = data["RPE"]  # list of (5, n, n)
+        rpe_list = data["rpe"]  # list of (5, n, n)
 
         B = agent_inputs.shape[0]
         N_a = agent_inputs.shape[1]

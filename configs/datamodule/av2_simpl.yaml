@@ -13,4 +13,4 @@ dataset:
   future_steps: 60
   min_distance_threshold: 20.0
   augmentation: false
-  force_preprocess: false
+  preprocess: true

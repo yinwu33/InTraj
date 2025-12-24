@@ -17,67 +17,89 @@ class LossFunc(nn.Module):
         self.reg_loss = nn.SmoothL1Loss(reduction="sum")
 
     def forward(self, out, data):
-        traj_fut = data["TRAJS_POS_FUT"] # [x["TRAJS_POS_FUT"] for x in data["TRAJS"]]
-        traj_fut = traj_fut
+        agent_future_pos = data[
+            "agent_future_pos"
+        ]  # [x["TRAJS_POS_FUT"] for x in data["TRAJS"]]
 
-        pad_fut = data["PAD_FUT"] #[x["PAD_FUT"] for x in data["TRAJS"]]
-        pad_fut = [i.long() for i in pad_fut]
+        agent_future_mask = data[
+            "agent_future_mask"
+        ]  # [x["PAD_FUT"] for x in data["TRAJS"]]
+        agent_future_mask = [i.long() for i in agent_future_mask]
 
-        cls, reg, aux = out
+        cls_list, reg_list, aux = out
 
+        num_agent_list = [x.shape[0] for x in cls_list]
 
-        train_mask = data["TRAIN_MASK"] # [x["TRAIN_MASK"] for x in data["TRAJS"]]
-        train_mask = train_mask
+        # train_mask = data["TRAIN_MASK"] # [x["TRAIN_MASK"] for x in data["TRAJS"]]
+        # train_mask = torch.ones(
+        #     len(cls_list), dtype=torch.bool, device=cls_list[0].device
+        # )
 
-        cls = [x[train_mask[i]] for i, x in enumerate(cls)]
-        reg = [x[train_mask[i]] for i, x in enumerate(reg)]
-        traj_fut = [x[train_mask[i]] for i, x in enumerate(traj_fut)]
-        pad_fut = [x[train_mask[i]] for i, x in enumerate(pad_fut)]
+        # cls_list = [x for i, x in enumerate(cls_list)]
+        # reg_list = [x[train_mask[i]] for i, x in enumerate(reg_list)]
+        agent_future_pos_list = [x[:num_agent_list[i]] for i, x in enumerate(agent_future_pos)]
+        agent_future_valid_list = [x[:num_agent_list[i]] for i, x in enumerate(agent_future_mask)]
 
 
         if self.yaw_loss:
             # yaw angle GT
-            ang_fut = data["TRAJS_ANG_FUT"]# [x["TRAJS_ANG_FUT"] for x in data["TRAJS"]]
-            ang_fut = ang_fut
+            agent_future_ang = data[
+                "agent_future_ang"
+            ]  # [x["TRAJS_ANG_FUT"] for x in data["TRAJS"]]
+            agent_future_ang = agent_future_ang
             # for yaw loss
-            yaw_loss_mask = data["YAW_LOSS_MASK"] #[x["YAW_LOSS_MASK"] for x in data["TRAJS"]]
+            yaw_loss_mask = data[
+                "yaw_loss_mask"
+            ]  # [x["YAW_LOSS_MASK"] for x in data["TRAJS"]]
 
             # collect aux info
             vel = [x[0] for x in aux]
             # apply train mask
-            vel = [x[train_mask[i]] for i, x in enumerate(vel)]
-            ang_fut = [x[train_mask[i]] for i, x in enumerate(ang_fut)]
-            yaw_loss_mask = [x[train_mask[i]] for i, x in enumerate(yaw_loss_mask)]
+            # vel = [x[train_mask[i]] for i, x in enumerate(vel)]
+            agent_future_ang_list = [x[:num_agent_list[i]] for i, x in enumerate(agent_future_ang)]
+            # agent_future_ang = [
+            #     x[train_mask[i]] for i, x in enumerate(agent_future_ang)
+            # ]
+            # yaw_loss_mask = [x[train_mask[i]] for i, x in enumerate(yaw_loss_mask)]
+            yaw_loss_mask_list = [x[:num_agent_list[i]] for i, x in enumerate(yaw_loss_mask)]
 
             loss_out = self.pred_loss_with_yaw(
-                cls, reg, vel, traj_fut, ang_fut, pad_fut, yaw_loss_mask
+                cls_list,
+                reg_list,
+                vel,
+                agent_future_pos_list,
+                agent_future_ang_list,
+                agent_future_valid_list,
+                yaw_loss_mask_list,
             )
             loss_out["loss"] = (
                 loss_out["cls_loss"] + loss_out["reg_loss"] + loss_out["yaw_loss"]
             )
         else:
-            loss_out = self.pred_loss(cls, reg, traj_fut, pad_fut)
+            loss_out = self.pred_loss(
+                cls_list, reg_list, agent_future_pos_list, agent_future_valid_list
+            )
             loss_out["loss"] = loss_out["cls_loss"] + loss_out["reg_loss"]
 
         return loss_out
 
     def pred_loss_with_yaw(
         self,
-        cls: List[torch.Tensor],
-        reg: List[torch.Tensor],
-        vel: List[torch.Tensor],
-        gt_preds: List[torch.Tensor],
-        gt_ang: List[torch.Tensor],
-        pad_flags: List[torch.Tensor],
-        yaw_flags: List[torch.Tensor],
+        cls_list: List[torch.Tensor],
+        reg_list: List[torch.Tensor],
+        vel_list: List[torch.Tensor],
+        gt_preds_list: List[torch.Tensor],
+        gt_ang_list: List[torch.Tensor],
+        future_valid_list: List[torch.Tensor],
+        yaw_loss_mask_list: List[torch.Tensor],
     ):
-        cls = torch.cat([x for x in cls], dim=0)  # [98, 6]
-        reg = torch.cat([x for x in reg], dim=0)  # [98, 6, 60, 2]
-        vel = torch.cat([x for x in vel], dim=0)  # [98, 6, 60, 2]
-        gt_preds = torch.cat([x for x in gt_preds], dim=0)  # [98, 60, 2]
-        gt_ang = torch.cat([x for x in gt_ang], dim=0)  # [98, 60, 2]
-        has_preds = torch.cat([x for x in pad_flags], dim=0).bool()  # [98, 60]
-        has_yaw = torch.cat([x for x in yaw_flags], dim=0).bool()  # [98]
+        cls = torch.cat([x for x in cls_list], dim=0)  # [98, 6]
+        reg = torch.cat([x for x in reg_list], dim=0)  # [98, 6, 60, 2]
+        vel = torch.cat([x for x in vel_list], dim=0)  # [98, 6, 60, 2]
+        gt_preds = torch.cat([x for x in gt_preds_list], dim=0)  # [98, 60, 2]
+        gt_ang = torch.cat([x for x in gt_ang_list], dim=0)  # [98, 60, 2]
+        has_preds = torch.cat([x for x in future_valid_list], dim=0).bool()  # [98, 60]
+        has_yaw = torch.cat([x for x in yaw_loss_mask_list], dim=0).bool()  # [98]
 
         loss_out = dict()
         num_modes = self.config.k
@@ -122,9 +144,7 @@ class LossFunc(nn.Module):
         mgn = mgn[mask0 * mask1]
         mask = mgn < self.config.mgn
         num_cls = mask.sum().item()
-        cls_loss = (self.config.mgn * mask.sum() - mgn[mask].sum()) / (
-            num_cls + 1e-10
-        )
+        cls_loss = (self.config.mgn * mask.sum() - mgn[mask].sum()) / (num_cls + 1e-10)
         loss_out["cls_loss"] = self.config.cls_coef * cls_loss
 
         reg = reg[row_idcs, min_idcs]
@@ -135,7 +155,9 @@ class LossFunc(nn.Module):
         loss_out["reg_loss"] = self.config.reg_coef * reg_loss
 
         # ~ yaw loss
-        vel = vel[row_idcs, min_idcs]  # select the best mode, keep identical to reg
+        vel = vel[
+            row_idcs, min_idcs
+        ]  # select the best mode, keep identical to reg
 
         _has_preds = has_preds[has_yaw].view(-1)
         _v1 = vel[has_yaw].view(-1, 2)[_has_preds]
@@ -163,7 +185,9 @@ class LossFunc(nn.Module):
         num_preds = self.config.global_pred_lane
         # assert(has_preds.all())
 
-        last = has_preds.float() + 0.1 * torch.arange(num_preds).float() / float(num_preds)
+        last = has_preds.float() + 0.1 * torch.arange(num_preds).float() / float(
+            num_preds
+        )
         max_last, last_idcs = last.max(1)
         mask = max_last > 1.0
 
@@ -196,10 +220,8 @@ class LossFunc(nn.Module):
         mgn = mgn[mask0 * mask1]
         mask = mgn < self.config.mgn
         num_cls = mask.sum().item()
-        cls_loss = (self.config.mgn * mask.sum() - mgn[mask].sum()) / (
-            num_cls + 1e-10
-        )
-        loss_out["cls_loss"] = self.config.cls_coef* cls_loss
+        cls_loss = (self.config.mgn * mask.sum() - mgn[mask].sum()) / (num_cls + 1e-10)
+        loss_out["cls_loss"] = self.config.cls_coef * cls_loss
 
         reg = reg[row_idcs, min_idcs]
         num_reg = has_preds.sum().item()

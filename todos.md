@@ -3,3 +3,5 @@
 - [ ] waymo dataset
 - [ ] nuplan dataset
 - [ ] Simpl
+- [ ] fix global step issue
+- [ ] simpl dataset augmentation
