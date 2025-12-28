@@ -71,7 +71,11 @@ class TrajectoryVisualizationCallback(pl.Callback):
     ) -> None:
         scenario = pl_module.create_scenario(batch, outputs, index=0)
         fig = plot_scenario(**scenario)
-        self._log_figure(trainer, fig, tag=f"{stage}/viz")
+        self._log_figure(
+            trainer,
+            fig,
+            tag=f"{stage}/viz",
+        )
         plt.close(fig)
 
     def _log_figure(self, trainer: pl.Trainer, fig, tag: str) -> None:

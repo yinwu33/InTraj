@@ -33,6 +33,28 @@ _AGENT_TYPE_MAP = {
     ObjectType.UNKNOWN: 5,
 }
 
+_LANE_TYPE_MAP = {
+    LaneType.VEHICLE: 0,
+    LaneType.BIKE: 1,
+    LaneType.BUS: 2,
+}
+
+_LANE_MARK_TYPE = {
+    LaneMarkType.DASH_SOLID_YELLOW: 0,
+    LaneMarkType.DASH_SOLID_WHITE: 0,
+    LaneMarkType.DASHED_WHITE: 0,
+    LaneMarkType.DASHED_YELLOW: 0,
+    LaneMarkType.DOUBLE_DASH_YELLOW: 0,
+    LaneMarkType.DOUBLE_DASH_WHITE: 0,
+    LaneMarkType.DOUBLE_SOLID_YELLOW: 1,
+    LaneMarkType.DOUBLE_SOLID_WHITE: 1,
+    LaneMarkType.SOLID_YELLOW: 1,
+    LaneMarkType.SOLID_WHITE: 1,
+    LaneMarkType.SOLID_DASH_WHITE: 1,
+    LaneMarkType.SOLID_DASH_YELLOW: 1,
+    LaneMarkType.SOLID_BLUE: 1,
+}
+
 _YAW_LOSS_AGENT_TYPE = {0, 2, 3, 4}
 
 
@@ -148,9 +170,6 @@ class AV2SimplDataset(Dataset):
         self, scenario: ArgoverseScenario, static_map: ArgoverseStaticMap
     ):
         """
-        # TODO: make relative pose to each last position
-        # TODO: agent_last_pos
-        # TODO: agent_last_angle
         Extracts, filters, normalizes, and pads trajectories.
         """
         # Identify Track Indices
@@ -207,79 +226,70 @@ class AV2SimplDataset(Dataset):
         lane_points = np.expand_dims(lane_points, axis=0)  # [1, N_map, 2]
 
         # Containers
-        agent_pos_list, agent_ang_list, agent_vel_list = [], [], []
-        agent_type_list, valid_mask_list = [], []
-        agent_av2_track_id_list, agent_av2_category_list = [], []
+        agent_pos_global_list = []
+        agent_ang_global_list = []
+        agent_vel_global_list = []
+        agent_last_pos_global_list = []
+        agent_last_rot_global_list = []
+        agent_score_types_list = []
+        agent_type_list = []
+        valid_mask_list = []
         yaw_loss_mask_list = []
 
-        # Reference Frame Initialization (Based on Focal Agent at last obs frame)
-        # Will be set in the first iteration (k=0 is focal)
-        focal_last_point, focal_last_rotation, focal_last_angle = None, None, None
-
+        # * get original scene-centric agent trajectories
         for i, track_idx in enumerate(sorted_indices):
             track = scenario.tracks[track_idx]
+            agent_score_type = sorted_categories[i]
 
             # Extract raw states
-            curr_agent_ts = np.array(
+            i_agent_ts = np.array(
                 [x.timestep for x in track.object_states], dtype=np.int16
             )
-            curr_agent_pos = np.array(
-                [x.position for x in track.object_states]
-            )  # [T, 2]
-            curr_agent_ang = np.array([x.heading for x in track.object_states])  # [T, ]
-            curr_agent_vel = np.array(
-                [x.velocity for x in track.object_states]
-            )  # [T, 2]
+            i_agent_pos = np.array([x.position for x in track.object_states])  # [T, 2]
+            i_agent_ang = np.array([x.heading for x in track.object_states])  # [T, ]
+            i_agent_vel = np.array([x.velocity for x in track.object_states])  # [T, 2]
 
             # Filter: Skip if strictly future or not present at observation time
             if (
-                curr_agent_ts[0] > last_history_index
-                or last_history_index not in curr_agent_ts
+                i_agent_ts[0] > last_history_index
+                or last_history_index not in i_agent_ts
             ):
                 continue
-
-            # Define Coordinate System based on Focal Agent (k=0)
-            if i == 0:
-                focal_last_point = curr_agent_pos[curr_agent_ts == last_history_index][
-                    0
-                ]
-                focal_last_angle = curr_agent_ang[curr_agent_ts == last_history_index][
-                    0
-                ]
-                focal_last_rotation = np.array(
-                    [
-                        [np.cos(focal_last_angle), -np.sin(focal_last_angle)],
-                        [np.sin(focal_last_angle), np.cos(focal_last_angle)],
-                    ]
-                )
 
             # Distance Filter (Skip irrelevant background actors)
             # Only check for non-scored/non-focal/non-av tracks
             if sorted_categories[i] in ["unscore", "frag"]:
                 # Check distance of observed points to map
-                history_mask = curr_agent_ts <= last_history_index
+                history_mask = i_agent_ts <= last_history_index
                 agent_history_points = np.expand_dims(
-                    curr_agent_pos[history_mask], axis=1
+                    i_agent_pos[history_mask], axis=1
                 )  # [T_obs, 1, 2]
                 dist = np.linalg.norm(agent_history_points - lane_points, axis=-1)
                 if np.min(dist) > self.min_dist_threshold:
                     continue
 
-            # --- Normalization (To Scene Centric) ---
-            # Transform position and velocity using the focal agent's frame
-            curr_agent_pos_norm = (curr_agent_pos - focal_last_point).dot(
-                focal_last_rotation
-            )
-            curr_agent_ang_norm = curr_agent_ang - focal_last_angle
-            curr_agent_vel_norm = curr_agent_vel.dot(focal_last_rotation)
+            idx_at_curr = np.where(i_agent_ts == last_history_index)[0][0]
+
+            i_agent_last_pos = i_agent_pos[idx_at_curr]  # [2]
+            i_agent_last_ang = i_agent_ang[idx_at_curr]  # Scalar
+            i_agent_last_rot = np.array(
+                [
+                    [np.cos(i_agent_last_ang), -np.sin(i_agent_last_ang)],
+                    [np.sin(i_agent_last_ang), np.cos(i_agent_last_ang)],
+                ]
+            )  # [2, 2]
+
+
+            agent_last_pos_global_list.append(i_agent_last_pos)
+            agent_last_rot_global_list.append(i_agent_last_rot)
 
             # --- Padding ---
             # Create full length arrays filled with nan/zeros
             # Flags (1 if present)
             valid_mask = np.zeros(self.total_steps, dtype=np.bool)
-            has_ts_mask = np.isin(curr_agent_ts, ts_frame_indices)
+            has_ts_mask = np.isin(i_agent_ts, ts_frame_indices)
             # Map valid timestamps to indices in the fixed array
-            mapped_indices = curr_agent_ts[has_ts_mask]
+            mapped_indices = i_agent_ts[has_ts_mask]
             valid_mask[mapped_indices] = True
 
             # Object Type One-Hot (7 classes)
@@ -296,55 +306,72 @@ class AV2SimplDataset(Dataset):
 
             # Position & Angle (Nearest Neighbor Padding)
             agent_pos_pad = np.full((self.total_steps, 2), np.nan)
-            agent_pos_pad[mapped_indices] = curr_agent_pos_norm[has_ts_mask]
+            agent_pos_pad[mapped_indices] = i_agent_pos[has_ts_mask]
             agent_pos_pad = self._padding_nearest_neighbor(agent_pos_pad)
 
             agent_ang_pad = np.full(self.total_steps, np.nan)
-            agent_ang_pad[mapped_indices] = curr_agent_ang_norm[has_ts_mask]
+            agent_ang_pad[mapped_indices] = i_agent_ang[has_ts_mask]
             agent_ang_pad = self._padding_nearest_neighbor(agent_ang_pad)
 
             # Velocity (Zero Padding)
             agent_vel_pad = np.zeros((self.total_steps, 2))
-            agent_vel_pad[mapped_indices] = curr_agent_vel_norm[has_ts_mask]
+            agent_vel_pad[mapped_indices] = i_agent_vel[has_ts_mask]
 
             # Append
-            agent_pos_list.append(agent_pos_pad)
-            agent_ang_list.append(agent_ang_pad)
-            agent_vel_list.append(agent_vel_pad)
+            agent_pos_global_list.append(agent_pos_pad)
+            agent_ang_global_list.append(agent_ang_pad)
+            agent_vel_global_list.append(agent_vel_pad)
             agent_type_list.append(agent_type)
             valid_mask_list.append(valid_mask)
-            agent_av2_track_id_list.append(
-                sorted_track_indices[i]
-            )  # original argoverse 2 track_id
-            agent_av2_category_list.append(
-                sorted_categories[i]
-            )  # original argoverse 2 track_id
+            agent_score_types_list.append(agent_score_type)
 
-        agent_pos_np = np.array(agent_pos_list, dtype=np.float32)
-        agent_ang_np = np.array(agent_ang_list, dtype=np.float32)
-        agent_cos_np = np.cos(agent_ang_np)
-        agent_sin_np = np.sin(agent_ang_np)
-        agent_cos_sin_np = np.stack(
-            [agent_cos_np, agent_sin_np], axis=-1
+        agent_pos_global_np = np.array(
+            agent_pos_global_list, dtype=np.float32
         )  # [N, 110, 2]
-        agent_vel_np = np.array(agent_vel_list, dtype=np.float32)
+        agent_ang_global_np = np.array(
+            agent_ang_global_list, dtype=np.float32
+        )  # [N, 110]
+        agent_cs_global_np = np.stack(
+            [np.cos(agent_ang_global_np), np.sin(agent_ang_global_np)], axis=-1
+        )  # [N, 110, 2]
+        agent_vel_global_np = np.array(
+            agent_vel_global_list, dtype=np.float32
+        )  # [N, 110, 2]
+        agent_last_pos_global_np = np.array(
+            agent_last_pos_global_list, dtype=np.float32
+        )  # [N, 2]
+        agent_last_rot_global_np = np.array(
+            agent_last_rot_global_list, dtype=np.float32
+        )  # [N, 2, 2]
         agent_type_np = np.array(agent_type_list, dtype=np.int16)
         valid_mask_np = np.array(valid_mask_list, dtype=np.int16)
         yaw_loss_np = np.array(yaw_loss_mask_list, dtype=np.int16)
 
-        agent_last_pos = agent_pos_np[:, last_history_index, :]
-        agent_history_pos = agent_pos_np[:, : self.history_steps, :]
-        agent_history_displacement = np.zeros_like(agent_history_pos)
+        # * Now global scene-centric to agent-centric (based on each agent's last pos/rot)
+        _t = agent_last_pos_global_np[:, None, :]  # [N, 1, 2]
+        _R = agent_last_rot_global_np
+        agent_pos_local_np = np.matmul(agent_pos_global_np - _t, _R)
+        agent_vel_local_np = np.matmul(agent_vel_global_np, _R)
+        ref_yaw_np = np.arctan2(_R[:, 1, 0], _R[:, 0, 0])
+        agent_ang_local_np = agent_ang_global_np - ref_yaw_np[:, None]
+        agent_ang_local_np = (agent_ang_local_np + np.pi) % (2 * np.pi) - np.pi
+
+        agent_history_pos_local_np = agent_pos_local_np[:, : self.history_steps, :]
+        agent_history_displacement = np.zeros_like(agent_history_pos_local_np)
         agent_history_displacement[:, 1:, :] = (
-            agent_history_pos[:, 1:, :] - agent_history_pos[:, :-1, :]
+            agent_history_pos_local_np[:, 1:, :] - agent_history_pos_local_np[:, :-1, :]
         )
 
-        agent_history = np.concatenate(
+        agent_history_feat = np.concatenate(
             [
                 agent_history_displacement,  # [N, 50, 2]
-                agent_cos_np[:, : self.history_steps, np.newaxis],  # [N, 50, 1]
-                agent_sin_np[:, : self.history_steps, np.newaxis],  # [N, 50, 1]
-                agent_vel_np[:, : self.history_steps, :],  # [N, 50, 2]
+                np.cos(agent_ang_local_np)[
+                    :, : self.history_steps, np.newaxis
+                ],  # [N, 50, 1]
+                np.sin(agent_ang_local_np)[
+                    :, : self.history_steps, np.newaxis
+                ],  # [N, 50, 1]
+                agent_vel_global_np[:, : self.history_steps, :],  # [N, 50, 2]
                 agent_type_np[:, : self.history_steps, :],  # [N, 50, 7]
                 valid_mask_np[:, : self.history_steps, np.newaxis],  # [N, 50,
             ],
@@ -353,21 +380,26 @@ class AV2SimplDataset(Dataset):
 
         # Stack into arrays
         return {
-            "agent_history": agent_history[
+            "agent_history": agent_history_feat[
                 :, self.truncate_steps :, :
             ],  # [N, 50-2, 14]
             "agent_history_mask": valid_mask_np[
                 :, self.truncate_steps : self.history_steps
             ],  # [N, 50-2]
-            "agent_future_pos": agent_pos_np[:, self.history_steps :, :],  # [N, 60, 2]
-            "agent_future_ang": agent_cos_sin_np[
+            "agent_future_pos": agent_pos_global_np[
+                :, self.history_steps :, :
+            ],  # [N, 60, 2]
+            "agent_future_ang": agent_cs_global_np[
                 :, self.history_steps :, :
             ],  # [N, 60, 2]
             "agent_future_mask": valid_mask_np[:, self.history_steps :],  # [N, 60]
-            "agent_last_pos": agent_last_pos,  # [N, 2]
-            "focal_agent_point": focal_last_point,  # [2, ]
-            "focal_agent_rotation": focal_last_rotation,  # [2, 2]
+            # "agent_last_pos": agent_last_pos,  # [N, 2]
+            "agent_last_pos": agent_last_pos_global_np,  # [N, 2]
+            "agent_last_rot": agent_last_rot_global_np,  # [N, 2, 2]
+            "focal_agent_point": agent_last_pos_global_np[0],  # [2, ]
+            "focal_agent_rotation": agent_last_rot_global_np[0],  # [2, 2]
             "yaw_loss_mask": yaw_loss_np,  # [N,]
+            "agent_score_types": agent_score_types_list,
         }
 
     def _padding_nearest_neighbor(self, traj):
@@ -405,13 +437,12 @@ class AV2SimplDataset(Dataset):
         """
         Discretizes lane segments and extracts topological features.
         """
-        node_ctrs, node_vecs = [], []
-        lane_ctrs, lane_vecs = [], []
-        # Features
-        lane_type, intersect = [], []
+        # * 1. collect lane and do segment and interpolation
+        lane_segments_global_np = []
+        lane_types = []
+        lane_is_intersect = []
         cross_left, cross_right = [], []
         left_nb, right_nb = [], []
-
         for lane_id, lane in static_map.vector_lane_segments.items():
             # Get Centerline
             centerline_raw = static_map.get_lane_segment_centerline(lane_id)[
@@ -425,124 +456,100 @@ class AV2SimplDataset(Dataset):
 
             for i in range(num_segs):
                 # Interpolate points for this sub-segment
-                s_lb = i * ds
-                s_ub = (i + 1) * ds
+                sub_lower_bound = i * ds
+                sub_upper_bound = (i + 1) * ds
                 num_sub_nodes = self.num_lane_nodes
 
-                cl_pts = [
+                centerline_points = [
                     centerline_ls.interpolate(s)
-                    for s in np.linspace(s_lb, s_ub, num_sub_nodes + 1)
+                    for s in np.linspace(
+                        sub_lower_bound, sub_upper_bound, num_sub_nodes + 1
+                    )
                 ]
-                ctrln = np.array(LineString(cl_pts).coords)  # [N+1, 2]
+                centerline_points = np.array(
+                    LineString(centerline_points).coords
+                )  # [N+1, 2], [11, 2]
 
-                # Transform to local scene frame
-                ctrln = (ctrln - orig).dot(rot)
+                lane_segments_global_np.append(centerline_points)
 
-                # Calculate Anchor for this segment
-                anch_pos = np.mean(ctrln, axis=0)
-                anch_vec = ctrln[-1] - ctrln[0]
-                norm = np.linalg.norm(anch_vec)
-                anch_vec = anch_vec / (norm + 1e-6)
-                anch_rot = np.array(
-                    [[anch_vec[0], -anch_vec[1]], [anch_vec[1], anch_vec[0]]]
-                )
+                # lane type
+                lane_type = np.zeros(3)
+                lane_type[_LANE_TYPE_MAP[lane.lane_type]] = 1
+                lane_types.append(lane_type)
 
-                lane_ctrs.append(anch_pos)
-                lane_vecs.append(anch_vec)
+                # lane intersection
+                lane_is_intersect.append(1.0 if lane.is_intersection else 0.0)
 
-                # Transform nodes to instance frame (relative to segment anchor)
-                ctrln_local = (ctrln - anch_pos).dot(anch_rot)
+                # lane mark type:
+                cross_left_1hot = np.zeros(3)
+                cross_right_1hot = np.zeros(3)
+                cross_left_1hot[_LANE_MARK_TYPE.get(lane.left_mark_type, 2)] = 1
+                cross_right_1hot[_LANE_MARK_TYPE.get(lane.right_mark_type, 2)] = 1
 
-                # Nodes (midpoints) and vectors (tangents)
-                ctrs = (ctrln_local[:-1] + ctrln_local[1:]) / 2.0
-                vecs = ctrln_local[1:] - ctrln_local[:-1]
+                cross_left.append(cross_left_1hot)
+                cross_right.append(cross_right_1hot)
+                # neighbors
+                left_nb.append(1 if lane.left_neighbor_id else 0)
+                right_nb.append(1 if lane.right_neighbor_id else 0)
 
-                node_ctrs.append(ctrs.astype(np.float32))
-                node_vecs.append(vecs.astype(np.float32))
+        lane_segments_global_np = np.array(
+            lane_segments_global_np
+        )  # [M, 11, 2], global coords
+        lane_types_np = np.array(lane_types).astype(np.int16)  # [M, 3]
+        lane_is_intersect_np = np.array(lane_is_intersect).astype(np.int16)  # [M, ]
+        cross_left_np = np.array(cross_left).astype(np.int16)  # [M, ]
+        cross_right_np = np.array(cross_right).astype(np.int16)  # [M, ]
+        left_nb_np = np.array(left_nb).astype(np.int16)  # [M, ]
+        right_nb_np = np.array(right_nb).astype(np.int16)  # [M, ]
 
-                # --- Extract Attributes ---
+        # * 2. get anchor of each lane segment
+        lane_anchor_pos_global = np.mean(lane_segments_global_np, axis=1)  # [M, 2]
+        lane_anchor_vec_global = (
+            lane_segments_global_np[:, -1, :] - lane_segments_global_np[:, 0, :]
+        )  # [M, 2]
+        lane_anchor_vec_global = lane_anchor_vec_global / (
+            np.linalg.norm(lane_anchor_vec_global, axis=1, keepdims=True) + 1e-6
+        )  # [M, 2]
+        lane_anchor_rot_global = np.array(
+            [
+                [lane_anchor_vec_global[:, 0], -lane_anchor_vec_global[:, 1]],
+                [lane_anchor_vec_global[:, 1], lane_anchor_vec_global[:, 0]],
+            ],
+        )  # [2, 2, M]
+        lane_anchor_rot_global = np.transpose(
+            lane_anchor_rot_global, (2, 0, 1)
+        )  # [M, 2, 2]
 
-                # Lane Type (Vehicle, Bike, Bus)
-                l_type = np.zeros(3)
-                if lane.lane_type == LaneType.VEHICLE:
-                    l_type[0] = 1
-                elif lane.lane_type == LaneType.BIKE:
-                    l_type[1] = 1
-                elif lane.lane_type == LaneType.BUS:
-                    l_type[2] = 1
-                lane_type.append(np.tile(l_type, (num_sub_nodes, 1)))
+        # * 3. transform each lane segment to anchor frame
+        lane_segments_to_anchor = (
+            lane_segments_global_np - lane_anchor_pos_global[:, None, :]
+        ) @ lane_anchor_rot_global  # [M, 11, 2]
 
-                # Intersection
-                is_inter = 1.0 if lane.is_intersection else 0.0
-                intersect.append(np.full(num_sub_nodes, is_inter, dtype=np.float32))
-
-                # Crossing Markers (Left/Right)
-                def get_mark_type(mark_type):
-                    # Returns [Crossable, Not-Crossable, Unknown]
-                    res = np.zeros(3)
-                    if mark_type in [
-                        LaneMarkType.DASH_SOLID_YELLOW,
-                        LaneMarkType.DASH_SOLID_WHITE,
-                        LaneMarkType.DASHED_WHITE,
-                        LaneMarkType.DASHED_YELLOW,
-                        LaneMarkType.DOUBLE_DASH_YELLOW,
-                        LaneMarkType.DOUBLE_DASH_WHITE,
-                    ]:
-                        res[0] = 1
-                    elif mark_type in [
-                        LaneMarkType.DOUBLE_SOLID_YELLOW,
-                        LaneMarkType.DOUBLE_SOLID_WHITE,
-                        LaneMarkType.SOLID_YELLOW,
-                        LaneMarkType.SOLID_WHITE,
-                        LaneMarkType.SOLID_DASH_WHITE,
-                        LaneMarkType.SOLID_DASH_YELLOW,
-                        LaneMarkType.SOLID_BLUE,
-                    ]:
-                        res[1] = 1
-                    else:
-                        res[2] = 1
-                    return res
-
-                cross_left.append(
-                    np.tile(get_mark_type(lane.left_mark_type), (num_sub_nodes, 1))
-                )
-                cross_right.append(
-                    np.tile(get_mark_type(lane.right_mark_type), (num_sub_nodes, 1))
-                )
-
-                # Neighbors
-                left_nb.append(
-                    np.ones(num_sub_nodes)
-                    if lane.left_neighbor_id
-                    else np.zeros(num_sub_nodes)
-                )
-                right_nb.append(
-                    np.ones(num_sub_nodes)
-                    if lane.right_neighbor_id
-                    else np.zeros(num_sub_nodes)
-                )
+        # * 4. process each lane segment to get features
+        lane_ctrs_to_anchor = (
+            lane_segments_to_anchor[:, :-1, :] + lane_segments_to_anchor[:, 1:, :]
+        ) / 2.0  # [M, 10, 2]
+        lane_vecs_to_anchor = (
+            lane_segments_to_anchor[:, 1:, :] - lane_segments_to_anchor[:, :-1, :]
+        )  # [M, 10, 2]
 
         # Stack Dictionary
         lane_graph_dict = {
-            "node_ctrs": np.stack(node_ctrs).astype(np.float32),
-            "node_vecs": np.stack(node_vecs).astype(np.float32),
-            "lane_ctrs": np.array(lane_ctrs).astype(np.float32),
-            "lane_vecs": np.array(lane_vecs).astype(np.float32),
-            "lane_type": np.stack(lane_type).astype(np.int16),  # [N, 10, 3]
-            "intersect": np.stack(intersect).astype(np.int16),  # [N, 10]
-            "cross_left": np.stack(cross_left).astype(
+            "node_ctrs": lane_ctrs_to_anchor.astype(np.float32),
+            "node_vecs": lane_vecs_to_anchor.astype(np.float32),
+            "lane_ctrs": lane_anchor_pos_global.astype(np.float32),
+            "lane_vecs": lane_anchor_vec_global.astype(np.float32),
+            "lane_type": lane_types_np.astype(np.int16),  # [N, 3]
+            "intersect": lane_is_intersect_np.astype(np.int16),  # [N, ]
+            "cross_left": cross_left_np.astype(
                 np.int16
             ),  # [N, 10, 3] one-host: [Crossable, Not-Crossable, Unknown]
-            "cross_right": np.stack(cross_right).astype(np.int16),  # [N, 10, 3]
-            "left": np.stack(left_nb).astype(np.int16),  # [N, 10]
-            "right": np.stack(right_nb).astype(np.int16),  # [N, 10]
+            "cross_right": cross_right_np.astype(np.int16),  # [N, 10, 3]
+            "left": left_nb_np.astype(np.int16),  # [N, 10]
+            "right": right_nb_np.astype(np.int16),  # [N, 10]
+            "num_nodes": lane_ctrs_to_anchor.shape[0] * lane_ctrs_to_anchor.shape[1],
+            "num_lanes": lane_ctrs_to_anchor.shape[0],
         }
-
-        lane_graph_dict["num_nodes"] = (
-            lane_graph_dict["node_ctrs"].shape[0]
-            * lane_graph_dict["node_ctrs"].shape[1]
-        )
-        lane_graph_dict["num_lanes"] = lane_graph_dict["lane_ctrs"].shape[0]
 
         return lane_graph_dict
 
@@ -623,7 +630,7 @@ class AV2SimplDataset(Dataset):
             dim=0,
         )  # [5, N+M, N+M]
 
-        return rpe
+        return rpe.float()
 
     def collate_fn(self, batch: List[Any]) -> Dict[str, Any]:
         """
@@ -667,11 +674,14 @@ class AV2SimplDataset(Dataset):
             dtype=torch.bool,
         )
         b_agent_future_pos = torch.zeros([batch_size, max_agents, self.future_steps, 2])
-        b_agent_future_ang = torch.zeros([batch_size, max_agents, self.future_steps, 2])
+        b_agent_future_ang = torch.zeros(
+            [batch_size, max_agents, self.future_steps, 2]
+        )  # TODO
         b_agent_future_mask = torch.zeros(
             [batch_size, max_agents, self.future_steps], dtype=torch.bool
         )
         b_agent_last_pos = torch.zeros([batch_size, max_agents, 2])
+        b_agent_last_rot = torch.zeros([batch_size, max_agents, 2, 2])
         b_yaw_loss_mask = torch.zeros([batch_size, max_agents], dtype=torch.bool)
         for i in range(batch_size):
             b_agent_history[i, : num_agents[i]] = batch["agent_history"][i]
@@ -680,6 +690,7 @@ class AV2SimplDataset(Dataset):
             b_agent_future_ang[i, : num_agents[i]] = batch["agent_future_ang"][i]
             b_agent_future_mask[i, : num_agents[i]] = batch["agent_future_mask"][i]
             b_agent_last_pos[i, : num_agents[i]] = batch["agent_last_pos"][i]
+            b_agent_last_rot[i, : num_agents[i]] = batch["agent_last_rot"][i]
             b_yaw_loss_mask[i, : num_agents[i]] = batch["yaw_loss_mask"][i]
 
         return {
@@ -689,9 +700,11 @@ class AV2SimplDataset(Dataset):
             "agent_future_ang": b_agent_future_ang,
             "agent_future_mask": b_agent_future_mask,
             "agent_last_pos": b_agent_last_pos,
+            "agent_last_rot": b_agent_last_rot,
             "yaw_loss_mask": b_yaw_loss_mask,
             "focal_agent_point": torch.stack(batch["focal_agent_point"], dim=0),
             "focal_agent_rotation": torch.stack(batch["focal_agent_rotation"], dim=0),
+            "agent_score_types": batch["agent_score_types"],
         }
 
     def _lane_gather(self, batch_size, graphs):
@@ -708,7 +721,7 @@ class AV2SimplDataset(Dataset):
         lane_ctrs = torch.zeros([batch_size, max_lanes, 2])
         lane_vecs = torch.zeros([batch_size, max_lanes, 2])
 
-        # for i in range(batch_size):
+        num_nodes_per_lane = graphs["node_ctrs"][0].shape[1]  # 10
 
         for i in range(batch_size):
             lane_idcs.append(
@@ -720,12 +733,22 @@ class AV2SimplDataset(Dataset):
                 [
                     graphs["node_ctrs"][i],
                     graphs["node_vecs"][i],
-                    graphs["intersect"][i][..., None],
-                    graphs["lane_type"][i],
-                    graphs["cross_left"][i],
-                    graphs["cross_right"][i],
-                    graphs["left"][i][..., None],
-                    graphs["right"][i][..., None],
+                    graphs["intersect"][i][:, None, None].expand(
+                        -1, num_nodes_per_lane, -1
+                    ),
+                    graphs["lane_type"][i][:, None, :].expand(
+                        -1, num_nodes_per_lane, -1
+                    ),
+                    graphs["cross_left"][i][:, None, :].expand(
+                        -1, num_nodes_per_lane, -1
+                    ),
+                    graphs["cross_right"][i][:, None, :].expand(
+                        -1, num_nodes_per_lane, -1
+                    ),
+                    graphs["left"][i][:, None, None].expand(-1, num_nodes_per_lane, -1),
+                    graphs["right"][i][:, None, None].expand(
+                        -1, num_nodes_per_lane, -1
+                    ),
                 ],
                 dim=-1,
             )

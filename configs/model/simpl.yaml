@@ -37,5 +37,5 @@ loss_cfg:
   mgn: 0.2
   cls_thres: 2.0
   cls_ignore: 0.2
-  yaw_loss: true  # ! ? where is this in original repo?
+  yaw_loss: false  # ! ? where is this in original repo?
   

@@ -18,52 +18,45 @@ class SimplLightningModule(pl.LightningModule):
         return self.model(batch)
 
     def training_step(self, batch, batch_idx):
-
-        num_agents = batch["agent_history"].shape[1]
-        num_lanes = batch["lane_feats"].shape[1]
-
-        self.log(
-            "train/num_agents",
-            num_agents,
-            prog_bar=False,
-            on_step=True,
-            on_epoch=False,
-        )
-        self.log(
-            "train/num_lanes",
-            num_lanes,
-            prog_bar=False,
-            on_step=True,
-            on_epoch=False,
-        )
-
-        self.log(
-            "train/num_all",
-            num_agents + num_lanes,
-            prog_bar=False,
-            on_step=True,
-            on_epoch=False,
-        )
-
         out = self.model(batch)  # out = (res_cls, res_reg, res_aux)
-        post_out = self.model.post_process(out)
-        pred = post_out["traj_pred"]
-        logits = post_out["prob_pred"]
+        # post_out = self.model.post_process(out)
+        post_out = self._post_process(out, batch)
+        losses = self.model.loss(post_out, batch)
 
-        losses = self.model.loss(out, batch)
+        B = len(post_out[0])
 
-        self._log_losses(losses, "train", batch_size=pred.shape[0])
+        self.log(
+            "train/loss_step",
+            losses["loss"],
+            on_step=True,
+            on_epoch=False,
+            prog_bar=False,
+            batch_size=B,
+        )
+        self.log(
+            "train/loss",
+            losses["loss"],
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=B,
+        )
         return losses["loss"]
 
     def validation_step(self, batch: dict, batch_idx: int):
         out = self.model(batch)  # out = (res_cls, res_reg, res_aux)
-        post_out = self.model.post_process(out)
-        pred = post_out["traj_pred"]
-        logits = post_out["prob_pred"]
-
-        losses = self.model.loss(out, batch)
-
-        self._log_losses(losses, "val", batch_size=pred.shape[0])
+        # post_out = self.model.post_process(out)
+        post_out = self._post_process(out, batch)
+        losses = self.model.loss(post_out, batch)
+        B = len(post_out[0])
+        self.log(
+            "val/loss",
+            losses["loss"],
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=B,
+        )
 
         # if self.model.k == 1:
         #     # single modal metrics ade, fde
@@ -88,16 +81,26 @@ class SimplLightningModule(pl.LightningModule):
         pred = out["traj_pred"]
         logits = out["prob_pred"]
 
-    def _log_losses(self, loss_dict, prefix: str, batch_size: int):
-        for k, v in loss_dict.items():
-            self.log(
-                f"{prefix}/{k}",
-                v,
-                prog_bar=True,
-                on_epoch=True,
-                on_step=True,
-                batch_size=batch_size,
+    def _post_process(self, out: tuple, batch: dict) -> dict:
+        res_cls, res_reg, res_aux = out
+        agent_last_pos_global = batch["agent_last_pos"]
+        agent_last_rot_global = batch["agent_last_rot"]
+
+        agent_history_mask = batch["agent_history_mask"].bool()
+
+        B = len(res_reg)
+
+        res_reg_global = []
+        for i in range(B):
+            mask = agent_history_mask[i]
+            valid_agents = mask.any(dim=1)  # (num_agents,)
+            R = agent_last_rot_global[i][valid_agents]  # (num_valid, 2, 2)
+            t = agent_last_pos_global[i][valid_agents]  # (num_valid,
+            res_reg_global.append(
+                self._agent_frame_to_global(res_reg[i], R, t, k_dim=1)
             )
+
+        return res_cls, res_reg_global, res_aux
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -111,6 +114,27 @@ class SimplLightningModule(pl.LightningModule):
 
         return pred, prob
 
+    def _agent_frame_to_global(self, pts, R, t, k_dim=None):
+        # pts: (..., N, T, 2)
+        # R:   (..., N, 2, 2)
+        # t:   (..., N, 2)
+        if k_dim is None:
+            pts_global = R @ pts.transpose(-1, -2)  # 结果: (..., N, 2, T)
+            pts_global = pts_global.transpose(-1, -2) + t.unsqueeze(-2)
+
+            return pts_global
+        else:
+            # e.g., k_dim = 1, means pts: (N, k, T, 2)
+            # R:   (N, 2, 2)
+            # t:   (N, 2)
+            Rk = R.unsqueeze(k_dim)  # (..., N, 1, 2, 2)  (假设 k_dim 指向 K 那一维)
+            tk = t.unsqueeze(k_dim).unsqueeze(-2)  # (..., N, 1, 1, 2)
+
+            # (..., N, K, 2, 2) @ (..., N, K, 2, T) -> (..., N, K, 2, T)
+            pts_global = Rk @ pts.transpose(-1, -2)
+            pts_global = pts_global.transpose(-1, -2) + tk  # (..., N, K, T, 2)
+            return pts_global
+
     def create_scenario(self, batch, outputs, index: int = 0):
 
         def _detach(x):
@@ -121,70 +145,86 @@ class SimplLightningModule(pl.LightningModule):
         # * forward pass for predictions (target agent only after post_process)
         with torch.no_grad():
             out = self.model(batch)
-        res_cls, res_reg, _ = out
+            post_out = self._post_process(out, batch)
+        logits = post_out[0][index]  # traj logits for all agents
+        preds = post_out[1][index]  # traj preds for all agents
+        probs = torch.softmax(logits, dim=0)
 
         # gather current sample
         lane_feats = batch["lane_feats"][index]
-        lane_mask = batch["lane_masks"][index].bool()
-        lane_ctrs = batch["lane_ctrs"][index]
-        lane_vecs = batch["lane_vecs"][index]
+        node_ctrs = lane_feats[:, :, :2]
+        node_vecs = lane_feats[:, :, 2:4]
+        
+        node_pts = node_ctrs - node_vecs * 0.5  # (num_nodes, 2)
+        # add one more pts
+        node_pts_shifted = node_ctrs + node_vecs * 0.5
+        # node_pts = torch.cat([node_pts, node_pts_shifted[-1, :].unsqueeze(0)], dim=0)  # (num_nodes+1, 2)
+        
+        lane_mask = batch["lane_masks"][index]
+        lane_anchor_points_global = batch["lane_ctrs"][index]
+        lane_anchor_vecs_globals = batch["lane_vecs"][index]
 
         agent_history = batch["agent_history"][index]  # (num_agents, 50-2, 14)
         agent_history_mask = batch["agent_history_mask"][index].bool()  # (na, 50-2)
-        agent_future_pos = batch["agent_future_pos"][index]
+        agent_future_pos_global = batch["agent_future_pos"][index]
         agent_future_mask = batch["agent_future_mask"][index].bool()
 
-        agent_last_pos = batch["agent_last_pos"][index]
+        agent_last_pos_global = batch["agent_last_pos"][index]
+        agent_last_rot_global = batch["agent_last_rot"][index]
 
         # gathre predictions
-        preds = res_reg[index]  # (num_agents, k, fut_len, 2)
-        logits = res_cls[index]  # (num_agents, k)
-        probs = torch.softmax(logits, dim=1)  # (num_agents, k)
         focal_agent_idx = 0
         ego_agent_idx = 1
 
         cum = torch.cumsum(agent_history[:, :, :2], dim=1)  # (N,T, 2)
-        agent_first_pos = agent_last_pos - cum[:, -1, :]
-        agent_history_pos = cum + agent_first_pos[:, None, :]
+        agent_first_pos = (
+            torch.zeros([agent_history.shape[0], 2], device=cum.device) - cum[:, -1, :]
+        )
+        agent_history_pos_local = cum + agent_first_pos[:, None, :]  # (N,T,2)
+
+        # now the agent_history_pos is still in local agent frame
+        # need to transform back to scene frame
+        # agent_future_pos_global = []
+        # preds_global = []
+
+        agent_history_pos_global = self._agent_frame_to_global(
+            agent_history_pos_local,
+            agent_last_rot_global,
+            agent_last_pos_global,
+        )
+
+        # preds_global = torch.stack(preds_global, dim=0)
 
         target_agent_idx = 0  # focal agent is first by construction
 
-        # recover lane points for viz
-        lane_points = []
-        # lane_inputs: (num_lane_segments, num_points_per_lane, 16)
-        # 16: node_ctrs(2), node_vecs(2), intersect(1), lane_type(3)
-        # cross_left(3), cross_right(3), left_nb(1), right_nb(1)
-        for i in range(lane_feats.shape[0]):
-            feats = lane_feats[i]  # (N, 16)
-            lane_ctr = lane_ctrs[i]  # (2,)
-            lane_vec = lane_vecs[i]  # (2,)
+        target_agent_last_pos = agent_last_pos_global[target_agent_idx]  #
+        target_agent_last_rot = agent_last_rot_global[target_agent_idx]  #
 
-            node_ctrs_local = feats[:, 0:2]  # (N, 2)
+        lane_anchor_rot_global = torch.zeros(
+            (lane_anchor_vecs_globals.shape[0], 2, 2),
+            device=lane_anchor_vecs_globals.device,
+        )
+        lane_anchor_rot_global[:, 0, 0] = lane_anchor_vecs_globals[:, 0]
+        lane_anchor_rot_global[:, 0, 1] = -lane_anchor_vecs_globals[:, 1]
+        lane_anchor_rot_global[:, 1, 0] = lane_anchor_vecs_globals[:, 1]
+        lane_anchor_rot_global[:, 1, 1] = lane_anchor_vecs_globals[:, 0]
 
-            vx, vy = lane_vec[0], lane_vec[1]
-            R = torch.stack(
-                [
-                    torch.stack([vx, -vy]),
-                    torch.stack([vy, vx]),
-                ],
-                dim=0,
-            )  # (2, 2)
-
-            node_ctrs_scene = node_ctrs_local @ R.T + lane_ctr[None, :]  # (N, 2)
-            lane_points.append(node_ctrs_scene)
-        lane_points = torch.stack(lane_points, dim=0)  # (num_lanes, num_points, 2)
+        lane_pts_global = lane_anchor_rot_global @ node_pts.transpose(1, 2)
+        lane_pts_global = (
+            lane_pts_global.transpose(1, 2) + lane_anchor_points_global[:, None, :]
+        )
 
         return {
-            "lane_points": lane_points,
-            "agent_history": _detach(agent_history_pos),
-            "agent_future": _detach(agent_future_pos),
+            "lane_points": lane_pts_global,
+            "agent_history": _detach(agent_history_pos_global),
+            "agent_future": _detach(agent_future_pos_global),
             "agent_history_mask": _detach(agent_history_mask.bool()),
             "agent_future_mask": _detach(agent_future_mask.bool()),
-            "agent_last_pos": _detach(agent_last_pos),
+            "agent_last_pos": _detach(agent_last_pos_global),
             "target_agent_idx": target_agent_idx,
             "preds": _detach(preds),
             "probs": _detach(probs),
             "scenario_id": batch["scenario_id"][index],
             "k": self.model.k,
+            "score_types": batch["agent_score_types"][index],
         }
-

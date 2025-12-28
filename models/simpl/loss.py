@@ -37,9 +37,12 @@ class LossFunc(nn.Module):
 
         # cls_list = [x for i, x in enumerate(cls_list)]
         # reg_list = [x[train_mask[i]] for i, x in enumerate(reg_list)]
-        agent_future_pos_list = [x[:num_agent_list[i]] for i, x in enumerate(agent_future_pos)]
-        agent_future_valid_list = [x[:num_agent_list[i]] for i, x in enumerate(agent_future_mask)]
-
+        agent_future_pos_list = [
+            x[: num_agent_list[i]] for i, x in enumerate(agent_future_pos)
+        ]
+        agent_future_valid_list = [
+            x[: num_agent_list[i]] for i, x in enumerate(agent_future_mask)
+        ]
 
         if self.yaw_loss:
             # yaw angle GT
@@ -56,12 +59,16 @@ class LossFunc(nn.Module):
             vel = [x[0] for x in aux]
             # apply train mask
             # vel = [x[train_mask[i]] for i, x in enumerate(vel)]
-            agent_future_ang_list = [x[:num_agent_list[i]] for i, x in enumerate(agent_future_ang)]
+            agent_future_ang_list = [
+                x[: num_agent_list[i]] for i, x in enumerate(agent_future_ang)
+            ]
             # agent_future_ang = [
             #     x[train_mask[i]] for i, x in enumerate(agent_future_ang)
             # ]
             # yaw_loss_mask = [x[train_mask[i]] for i, x in enumerate(yaw_loss_mask)]
-            yaw_loss_mask_list = [x[:num_agent_list[i]] for i, x in enumerate(yaw_loss_mask)]
+            yaw_loss_mask_list = [
+                x[: num_agent_list[i]] for i, x in enumerate(yaw_loss_mask)
+            ]
 
             loss_out = self.pred_loss_with_yaw(
                 cls_list,
@@ -155,9 +162,7 @@ class LossFunc(nn.Module):
         loss_out["reg_loss"] = self.config.reg_coef * reg_loss
 
         # ~ yaw loss
-        vel = vel[
-            row_idcs, min_idcs
-        ]  # select the best mode, keep identical to reg
+        vel = vel[row_idcs, min_idcs]  # select the best mode, keep identical to reg
 
         _has_preds = has_preds[has_yaw].view(-1)
         _v1 = vel[has_yaw].view(-1, 2)[_has_preds]
@@ -185,9 +190,9 @@ class LossFunc(nn.Module):
         num_preds = self.config.global_pred_lane
         # assert(has_preds.all())
 
-        last = has_preds.float() + 0.1 * torch.arange(num_preds).float() / float(
-            num_preds
-        )
+        last = has_preds.float() + 0.1 * torch.arange(
+            num_preds, device=has_preds.device, dtype=torch.float32
+        ).float() / float(num_preds)
         max_last, last_idcs = last.max(1)
         mask = max_last > 1.0
 

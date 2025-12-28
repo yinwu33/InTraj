@@ -1,3 +1,8 @@
+from pathlib import Path
+
+import torch
+
+torch.set_float32_matmul_precision("high")  # high / medium
 import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig
@@ -14,10 +19,12 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
 
     checkpoint_callback = ModelCheckpoint(
         monitor="val/loss",
-        dirpath="./outputs/checkpoints",
-        filename="vectornet-{epoch:02d}-{val/loss:.4f}",
+        dirpath=Path(cfg.output_root_dir) / "ckpt",
+        filename="motion_prediction-{epoch:02d}-{val/loss:.4f}",
         save_top_k=3,
+        save_last=True,
         mode="min",
+        auto_insert_metric_name=False,
     )
     callbacks.append(checkpoint_callback)
 
@@ -60,7 +67,7 @@ def main(cfg: DictConfig) -> None:
         callbacks=build_callbacks(cfg),
         **cfg.trainer,
     )
-    trainer.fit(model, datamodule=dm)
+    trainer.fit(model, datamodule=dm, ckpt_path=cfg.get("resume_from"))
     trainer.test(model, datamodule=dm)
 
 
