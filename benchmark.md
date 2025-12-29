@@ -1,7 +1,7 @@
-| model             | parameter size |        type | minADE | minFDE | epoch x batchsize |                            Comment |
-| ----------------- | -------------: | ----------: | -----: | -----: | ----------------: | ---------------------------------: |
-| VectorNet (Large) |           9.1M | multi modal |   1.37 |   2.97 |           200x256 | overfitting after about 100 epochs |
-| SIMPL             |          2.6 M |             |        |        |                   |                                    |
-| HiVT              |                |             |        |        |                   |                                    |
-| MRT               |                |             |        |        |                   |                                    |
-| QCNet             |                |             |        |        |                   |                                    |
+| model             | #param (claim/repeat) | minADE_6 (claim/repeat) | minFDE_6 (claim/repeat) |   MR_6 | b-miniFDE_6 | epoch x batchsize |                            Comment |
+| ----------------- | --------------------: | ----------------------: | ----------------------: | -----: | ----------: | ----------------: | ---------------------------------: |
+| VectorNet (Large) |                 9.1 M |                - / 1.37 |                - / 2.97 |    - / |         - / |           200x256 | overfitting after about 100 epochs |
+| SIMPL             |                 1.9 M |                  0.72 / |                  1.43 / |  19.2/ |      2.05 / |                   |                                    |
+| QCNet             |                 7.3 M |                  0.65 / |                 1.29  / | 16.0 / |      1.91 / |                   |                                    |
+| HiVT              |                       |                         |                         |        |             |                   |                                    |
+| MRT               |                       |                         |                         |        |             |                   |                                    |

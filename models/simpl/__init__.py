@@ -134,6 +134,38 @@ class SimplLightningModule(pl.LightningModule):
             pts_global = Rk @ pts.transpose(-1, -2)
             pts_global = pts_global.transpose(-1, -2) + tk  # (..., N, K, T, 2)
             return pts_global
+        
+        
+    def _get_agent_types(self, batch, index: int = 0):
+        # ObjectType.VEHICLE: 0,
+        # ObjectType.PEDESTRIAN: 1,
+        # ObjectType.MOTORCYCLIST: 2,
+        # ObjectType.CYCLIST: 3,
+        # ObjectType.BUS: 4,
+        # ObjectType.UNKNOWN: 5,
+        # agent_history is 14 with 2+2+2+7+1
+        # where 7 is one-hot encoding of object type {vehicle, pedestrian, motorcyclist, cyclist, bus, unknown, default}
+        agent_history = batch["agent_history"][index]  # (num_agents, 50-2, 14)
+        agent_history_mask = batch["agent_history_mask"][index].bool()  # (na, 50-2)
+        
+        valid_agent_history = agent_history[agent_history_mask.any(-1)]
+        agent_types = []
+        for agent in valid_agent_history:
+            obj_type_onehot = agent[:, 7:14].sum(dim=0)  # (7,)
+            obj_type_idx = torch.argmax(obj_type_onehot).item()
+            if obj_type_idx == 0:
+                agent_types.append("vehicle")
+            elif obj_type_idx == 1:
+                agent_types.append("pedestrian")
+            elif obj_type_idx == 2:
+                agent_types.append("motorcyclist")
+            elif obj_type_idx == 3:
+                agent_types.append("cyclist")
+            elif obj_type_idx == 4:
+                agent_types.append("bus")
+            else:
+                agent_types.append("unknown")
+        return agent_types
 
     def create_scenario(self, batch, outputs, index: int = 0):
 
@@ -171,6 +203,7 @@ class SimplLightningModule(pl.LightningModule):
 
         agent_last_pos_global = batch["agent_last_pos"][index]
         agent_last_rot_global = batch["agent_last_rot"][index]
+        agent_types = self._get_agent_types(batch, index)
 
         # gathre predictions
         focal_agent_idx = 0
@@ -227,4 +260,6 @@ class SimplLightningModule(pl.LightningModule):
             "scenario_id": batch["scenario_id"][index],
             "k": self.model.k,
             "score_types": batch["agent_score_types"][index],
+            "log_id": batch["scenario_id"][index],
+            "agent_types": agent_types,
         }

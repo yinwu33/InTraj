@@ -17,10 +17,15 @@ from callbacks.viz import TrajectoryVisualizationCallback
 def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
     callbacks = []
 
+    filename_fmt = (
+        f"{cfg['project_name']}_{cfg['exp_name']}"
+        + "_epoch_{epoch:02d}_loss_{val/loss:.4f}"
+    )
+
     checkpoint_callback = ModelCheckpoint(
         monitor="val/loss",
         dirpath=Path(cfg.output_root_dir) / "ckpt",
-        filename="motion_prediction-{epoch:02d}-{val/loss:.4f}",
+        filename=filename_fmt,
         save_top_k=3,
         save_last=True,
         mode="min",

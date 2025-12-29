@@ -1,6 +1,7 @@
 from __future__ import annotations
 import matplotlib.pyplot as plt
 from typing import Optional
+from .viz_av2 import AV2MapVisualizer
 
 import torch
 import numpy as np
@@ -13,24 +14,10 @@ matplotlib.use("Agg")  # safe headless backend for dataloader forks
 from utils.numpy import to_numpy
 
 _COLOR_MAP = {
-    # 格式：[历史轨迹, 未来/真值轨迹, 当前位置/预测点]
-    
-    # Focal Agent (红色系：强调高对比度)
-    # 历史用淡红，未来用鲜红，当前点用深红/红点
     "focal": ["#ff9999", "#ff0000", "#8b0000"],
-    
-    # AV (蓝色系：专业且冷色调)
-    # 历史浅蓝，未来中蓝，当前位置深蓝
     "av": ["#a1c9f4", "#1f77b4", "#084594"],
-    
-    # Score/Prediction (橙色系：警示色，用于区分真值和预测)
-    # 预测轨迹通常建议用虚线或明亮的橙色
     "score": ["#ffbb78", "#ff7f0e", "#a65628"],
-    
-    # Other Agents (灰色系：背景化，减少视觉干扰)
     "other": ["#d3d3d3", "#7f7f7f", "#555555"],
-    
-    # 地图元素 (极浅灰：仅作为参考坐标)
     "lane": "#e0e0e0",
 }
 
@@ -48,6 +35,16 @@ _SCORE_TYPES = [
     # "frag",
 ]
 
+_AGENT_BBOX = {
+    "vehicle": (5.0, 2.0),
+    "motorcyclist": (2.0, 0.7),
+    "pedestrian": (0.3, 0.5),
+    "cyclist": (2.0, 0.7),
+    "bus": (7.0, 2.1),
+    # "unknown": None,
+    # "default": None,
+}
+
 
 def plot_scenario(
     lane_points: torch.Tensor | np.ndarray,
@@ -63,6 +60,8 @@ def plot_scenario(
     k: int = 1,
     only_print_focal_pred: bool = False,
     score_types: list[str] | None = None,
+    log_id: str = None,
+    agent_types: list[str] | None = None,
 ):
     """Plot lanes, agent history, target future ground truth, and prediction."""
 
@@ -83,28 +82,29 @@ def plot_scenario(
     fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
 
     # plot lanes
-    ax = _plot_lanes(ax, lane_points_np)
+    ax = _plot_lanes(ax, lane_points_np, log_id)
 
     # plot agents
     for idx in valid_indices:
-        agent_type = score_types[idx]
+        agent_score_type = score_types[idx]
         agent_label = None
         current_only = True
+        agent_type = agent_types[idx]
 
-        if agent_type == "focal":
-            agent_type = "focal"
+        if agent_score_type == "focal":
+            agent_score_type = "focal"
             agent_label = "focal"
             current_only = False
-        elif agent_type == "av":
-            agent_type = "av"
+        elif agent_score_type == "av":
+            agent_score_type = "av"
             agent_label = "av"
             current_only = False
-        elif agent_type == "score":
-            agent_type = "score"
+        elif agent_score_type == "score":
+            agent_score_type = "score"
             agent_label = "scored"
             current_only = False
         else:
-            agent_type = "other"
+            agent_score_type = "other"
             agent_label = None
             current_only = True
 
@@ -115,25 +115,26 @@ def plot_scenario(
             agnet_history_mask_np[idx],
             agent_future_mask_np[idx],
             agent_last_pos_np[idx],
-            color_map=_COLOR_MAP[agent_type],
+            color_map=_COLOR_MAP[agent_score_type],
             label=agent_label,
             current_only=current_only,
+            agent_type=agent_type,
         )
 
     # plot predictions
     if preds_np.ndim == 4:
         # [n, k, t, 2]
         for idx in range(num_agents):
-            agent_type = score_types[idx]
-            if agent_type not in _SCORE_TYPES:
+            agent_score_type = score_types[idx]
+            if agent_score_type not in _SCORE_TYPES:
                 continue
             ax = _plot_predictions(
                 ax,
                 preds_np[idx],
                 probs_np[idx] if probs_np is not None else None,
                 max_k=k,
-                color_map=_COLOR_MAP[agent_type],
-                plot_text=(agent_type in ["focal", "av"]),
+                color_map=_COLOR_MAP[agent_score_type],
+                plot_text=(agent_score_type in ["focal", "av"]),
             )
     elif preds_np.ndim == 3:
         # [k, t, 2]
@@ -157,16 +158,18 @@ def plot_scenario(
         title = f"Log: {scenario_id}"
         ax.set_title(title)
 
-    ax.legend(loc="upper right")
+    # ax.legend(loc="upper right")
     ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.5)
     fig.tight_layout()
     return fig
 
 
-def _plot_lanes(
-    ax: plt.Axes,
-    lane_points_np: np.ndarray,
-):
+def _plot_lanes(ax: plt.Axes, lane_points_np: np.ndarray, log_id: str = None):
+    if log_id is not None:
+        visualizer = AV2MapVisualizer()
+        visualizer.show_map_clean(ax, seq_id=log_id, show_freespace=False)
+        return ax
+
     # Map polylines
     for lane in lane_points_np:
         ax.plot(
@@ -190,6 +193,7 @@ def _plot_agent(
     color_map: Optional[dict] = _COLOR_MAP["other"],
     label: Optional[str] = None,
     current_only: bool = True,
+    agent_type: str = "default",
 ):
 
     if not current_only:
@@ -220,6 +224,21 @@ def _plot_agent(
         s=_POINT_SIZE,
         zorder=5,
     )
+    
+    # TODO: heading angle
+    # if agent_type in _AGENT_BBOX:
+    #     bbox_len, bbox_wid = _AGENT_BBOX[agent_type]
+    #     ax.add_patch(plt.Rectangle(
+    #         (agent_last_pos_np[0] - bbox_len / 2, agent_last_pos_np[1] - bbox_wid / 2),
+    #         bbox_len,
+    #         bbox_wid,
+    #         angle=0.0,
+    #         edgecolor=color_map[2],
+    #         facecolor='none',
+    #         linewidth=0.5,
+    #         zorder=4,
+    #     ))
+    
     return ax
 
 
@@ -268,8 +287,6 @@ def _plot_predictions(
             alpha=0.3,
             zorder=5,
         )
-        
-        
 
         # text
         if plot_text:
