@@ -145,4 +145,7 @@ class VectorNetLightningModule(pl.LightningModule):
             "probs": probabilities,
             "scenario_id": scenario_id,
             "k": self.model.k,
+            "score_types": None,
+            "log_id": scenario_id,
+            "agent_types": None,
         }
