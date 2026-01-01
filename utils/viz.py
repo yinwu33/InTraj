@@ -17,9 +17,19 @@ _COLOR_MAP = {
     "focal": ["#ff9999", "#ff0000", "#8b0000"],
     "av": ["#a1c9f4", "#1f77b4", "#084594"],
     "score": ["#ffbb78", "#ff7f0e", "#a65628"],
-    "other": ["#d3d3d3", "#7f7f7f", "#555555"],
+    "unscore": ["#d3d3d3", "#7f7f7f", "#555555"],
+    "frag": ["#d3d3d3", "#7f7f7f", "#555555"],
     "lane": "#e0e0e0",
 }
+
+_ID_TO_SCORE_TYPE = {
+    4: "av",
+    3: "focal",
+    2: "score",
+    1: "unscore",
+    0: "frag",
+}
+
 
 _POINT_SIZE = 5
 _LINE_WIDTH = 1.0
@@ -27,13 +37,7 @@ _FONT_SIZE = 6
 
 _VIEW_RADIUS = 60.0
 
-_SCORE_TYPES = [
-    "focal",
-    "av",
-    "score",
-    # "unscore",
-    # "frag",
-]
+_SCORE_TYPES = ["focal", "av", "score"]
 
 _AGENT_BBOX = {
     "vehicle": (5.0, 2.0),
@@ -48,17 +52,17 @@ _AGENT_BBOX = {
 
 def plot_scenario(
     lane_points: torch.Tensor | np.ndarray,
-    agent_history: torch.Tensor | np.ndarray,
-    agent_future: torch.Tensor | np.ndarray,
-    agent_history_mask: torch.Tensor | np.ndarray,
-    agent_future_mask: torch.Tensor | np.ndarray,
+    agent_hist_pos: torch.Tensor | np.ndarray,
+    agent_fut_pos: torch.Tensor | np.ndarray,
+    agent_hist_mask: torch.Tensor | np.ndarray,
+    agent_fut_mask: torch.Tensor | np.ndarray,
     agent_last_pos: torch.Tensor | np.ndarray,
+    # agent_last_ang: torch.Tensor | np.ndarray,
     target_agent_idx: int,
     preds: torch.Tensor | np.ndarray | None = None,
     probs: torch.Tensor | None = None,
     scenario_id: str | None = None,
     k: int = 1,
-    only_print_focal_pred: bool = False,
     score_types: list[str] | None = None,
     log_id: str = None,
     agent_types: list[str] | None = None,
@@ -66,10 +70,10 @@ def plot_scenario(
     """Plot lanes, agent history, target future ground truth, and prediction."""
 
     lane_points_np = to_numpy(lane_points)  # (num_lanes, num_points, 2)
-    agent_history_np = to_numpy(agent_history)  # (num_agents, hist_len, 7)
-    agnet_history_mask_np = to_numpy(agent_history_mask)  # (num_agents, hist_len)
-    agent_future_np = to_numpy(agent_future)  # (num_agents, fut_len, 2)
-    agent_future_mask_np = to_numpy(agent_future_mask)  # (num_agents, fut_len)
+    agent_history_np = to_numpy(agent_hist_pos)  # (num_agents, hist_len, 7)
+    agnet_history_mask_np = to_numpy(agent_hist_mask)  # (num_agents, hist_len)
+    agent_future_np = to_numpy(agent_fut_pos)  # (num_agents, fut_len, 2)
+    agent_future_mask_np = to_numpy(agent_fut_mask)  # (num_agents, fut_len)
     agent_last_pos_np = to_numpy(agent_last_pos)  # (num_agents, 2)
     preds_np = to_numpy(preds) if preds is not None else None
     probs_np = to_numpy(probs) if probs is not None else None
@@ -86,25 +90,21 @@ def plot_scenario(
 
     # plot agents
     for idx in valid_indices:
-        agent_score_type = score_types[idx]
+        agent_score_type = _ID_TO_SCORE_TYPE[int(score_types[idx])]
         agent_label = None
         current_only = True
         agent_type = agent_types[idx]
 
         if agent_score_type == "focal":
-            agent_score_type = "focal"
             agent_label = "focal"
             current_only = False
         elif agent_score_type == "av":
-            agent_score_type = "av"
             agent_label = "av"
             current_only = False
         elif agent_score_type == "score":
-            agent_score_type = "score"
-            agent_label = "scored"
+            agent_label = "score"
             current_only = False
         else:
-            agent_score_type = "other"
             agent_label = None
             current_only = True
 
@@ -125,7 +125,8 @@ def plot_scenario(
     if preds_np.ndim == 4:
         # [n, k, t, 2]
         for idx in range(num_agents):
-            agent_score_type = score_types[idx]
+            agent_score_type = _ID_TO_SCORE_TYPE[int(score_types[idx])]
+
             if agent_score_type not in _SCORE_TYPES:
                 continue
             ax = _plot_predictions(
@@ -190,7 +191,7 @@ def _plot_agent(
     agent_history_mask_np: np.ndarray,
     agent_future_mask_np: np.ndarray,
     agent_last_pos_np: np.ndarray,
-    color_map: Optional[dict] = _COLOR_MAP["other"],
+    color_map: Optional[dict] = _COLOR_MAP["unscore"],
     label: Optional[str] = None,
     current_only: bool = True,
     agent_type: str = "default",
@@ -224,7 +225,7 @@ def _plot_agent(
         s=_POINT_SIZE,
         zorder=5,
     )
-    
+
     # TODO: heading angle
     # if agent_type in _AGENT_BBOX:
     #     bbox_len, bbox_wid = _AGENT_BBOX[agent_type]
@@ -238,7 +239,7 @@ def _plot_agent(
     #         linewidth=0.5,
     #         zorder=4,
     #     ))
-    
+
     return ax
 
 
@@ -247,7 +248,7 @@ def _plot_predictions(
     preds_np: np.ndarray,
     probs_np: np.ndarray,
     max_k: int | None = None,
-    color_map: Optional[dict] = _COLOR_MAP["other"],
+    color_map: Optional[dict] = _COLOR_MAP["unscore"],
     plot_text: bool = False,
 ):
     # preds_np.shape [k, t, 2]

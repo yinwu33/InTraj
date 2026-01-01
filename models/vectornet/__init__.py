@@ -37,42 +37,6 @@ class VectorNetLightningModule(pl.LightningModule):
 
         self._log_losses(losses, "val", batch_size=batch["target_gt"].shape[0])
 
-        if self.model.k == 1:
-            # single modal metrics ade, fde
-            ade = ADE(pred, batch["target_gt"]).mean()
-            fde = FDE(pred, batch["target_gt"]).mean()
-            self.log(
-                "val/ADE",
-                ade,
-                prog_bar=True,
-                on_epoch=True,
-                batch_size=batch["target_gt"].shape[0],
-            )
-            self.log(
-                "val/FDE",
-                fde,
-                prog_bar=True,
-                on_epoch=True,
-                batch_size=batch["target_gt"].shape[0],
-            )
-        else:
-            # multi modal metrics minade, minfde
-            min_ade = minADE(pred, batch["target_gt"]).mean()
-            min_fde = minFDE(pred, batch["target_gt"]).mean()
-            self.log(
-                "val/minADE",
-                min_ade,
-                prog_bar=True,
-                on_epoch=True,
-                batch_size=batch["target_gt"].shape[0],
-            )
-            self.log(
-                "val/minFDE",
-                min_fde,
-                prog_bar=True,
-                on_epoch=True,
-                batch_size=batch["target_gt"].shape[0],
-            )
         return {
             "loss": losses["loss"],
             "pred": pred,
@@ -82,6 +46,9 @@ class VectorNetLightningModule(pl.LightningModule):
     def test_step(self, batch: dict, batch_idx: int):
         pred, logits = self.model(batch)
         losses = self.model.loss(pred, logits, batch)
+        metrics = self.calculate_metrics(pred, batch["target_gt"])
+
+        losses.update(metrics)
 
         self._log_losses(losses, "test", batch_size=batch["target_gt"].shape[0])
         return {
@@ -103,6 +70,28 @@ class VectorNetLightningModule(pl.LightningModule):
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.model.parameters(), lr=self.lr)
+
+    # cal metrics of minade and minfde
+    def calculate_metrics(
+        self, pred: torch.Tensor, gt: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        """Calculate minADE and minFDE for given predictions and ground truth."""
+        if pred is None:
+            return {}
+
+        if pred.dim() == 3:
+            # single modal output -> expand to [B, 1, T, 2]
+            pred_for_metrics = pred.unsqueeze(1)
+        else:
+            pred_for_metrics = pred
+
+        min_ade = minADE(pred_for_metrics, gt).mean()
+        min_fde = minFDE(pred_for_metrics, gt).mean()
+
+        return {
+            "minADE": min_ade,
+            "minFDE": min_fde,
+        }
 
     def create_scenario(self, batch, outputs, index: int = 0):
         def _detach(tensor: torch.Tensor) -> torch.Tensor:
@@ -126,6 +115,7 @@ class VectorNetLightningModule(pl.LightningModule):
         target_agent_global = batch["target_agent_global_idx"][index].item()
         target_agent_idx = int(target_agent_global - agent_start)
 
+        # TODO: add prediction
         prediction = None
         other_prediction = None
         if pred is not None:
@@ -135,10 +125,14 @@ class VectorNetLightningModule(pl.LightningModule):
 
         return {
             "lane_points": _detach(batch["lane_points"][lane_start:lane_end]),
-            "agent_history": _detach(batch["agent_history"][agent_start:agent_end]),
-            "agent_future": _detach(batch["agent_future"][agent_start:agent_end]),
-            "agent_history_mask": _detach(batch["agent_history_mask"][agent_start:agent_end]),
-            "agent_future_mask": _detach(batch["agent_future_mask"][agent_start:agent_end]),
+            "agent_hist_pos": _detach(batch["agent_history"][agent_start:agent_end]),
+            "agent_fut_pos": _detach(batch["agent_future"][agent_start:agent_end]),
+            "agent_hist_mask": _detach(
+                batch["agent_history_mask"][agent_start:agent_end]
+            ),
+            "agent_fut_mask": _detach(
+                batch["agent_future_mask"][agent_start:agent_end]
+            ),
             "agent_last_pos": _detach(batch["agent_last_pos"][agent_start:agent_end]),
             "target_agent_idx": target_agent_idx,
             "preds": prediction,
@@ -146,7 +140,7 @@ class VectorNetLightningModule(pl.LightningModule):
             "scenario_id": scenario_id,
             "k": self.model.k,
             "score_types": None,
-            "log_id": scenario_id,
+            # "log_id": scenario_id,  # TODO: lane plot should in global coords
             "agent_types": batch["agent_types"][agent_start:agent_end],
             "score_types": batch["agent_score_types"][agent_start:agent_end],
         }

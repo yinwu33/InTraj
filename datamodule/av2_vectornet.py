@@ -57,7 +57,11 @@ class AV2VectorNetDatamodule(pl.LightningDataModule):
                 split=self.val_split, **common_kwargs
             )
 
-        if stage in ("test", None):
+        # if stage in ("test", None):
+        else:
+            self.val_dataset = AV2VectorNetDataset(
+                split=self.val_split, **common_kwargs
+            )
             self.test_dataset = AV2VectorNetDataset(
                 split=self.test_split, **common_kwargs
             )

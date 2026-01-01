@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import pytorch_lightning as pl
 
@@ -58,6 +60,8 @@ class SimplLightningModule(pl.LightningModule):
             batch_size=B,
         )
 
+        # self._log_min_metrics(post_out, batch, prefix="val")
+
         # if self.model.k == 1:
         #     # single modal metrics ade, fde
         #     ade = ADE(pred, batch["target_gt"]).mean()
@@ -76,10 +80,24 @@ class SimplLightningModule(pl.LightningModule):
         #              on_epoch=True, batch_size=batch["target_gt"].shape[0])
 
     def test_step(self, batch: dict, batch_idx: int):
-        res_cls, res_reg, res_aux = self.model(batch)
-        out = self.model.post_process((res_cls, res_reg, res_aux))
-        pred = out["traj_pred"]
-        logits = out["prob_pred"]
+        out = self.model(batch)
+        post_out = self._post_process(out, batch)
+        losses = self.model.loss(post_out, batch)
+        
+        metrics = self.calculate_metrics(post_out[1], batch["target_gt"])
+        losses.update(metrics)
+        
+        self.log(
+            "test/loss",
+            losses["loss"],
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=len(post_out[0]),
+        )
+
+        self._log_min_metrics(post_out, batch, prefix="test")
+        return losses["loss"]
 
     def _post_process(self, out: tuple, batch: dict) -> dict:
         res_cls, res_reg, res_aux = out
@@ -101,6 +119,25 @@ class SimplLightningModule(pl.LightningModule):
             )
 
         return res_cls, res_reg_global, res_aux
+
+    def calculate_metrics(self, pred: torch.Tensor, gt: torch.Tensor) -> dict:
+        """Calculate minADE and minFDE for given predictions and ground truth."""
+        if pred is None:
+            return {}
+
+        if pred.dim() == 3:
+            # single modal output -> expand to [B, 1, T, 2]
+            pred_for_metrics = pred.unsqueeze(1)
+        else:
+            pred_for_metrics = pred
+
+        min_ade = minADE(pred_for_metrics, gt).mean()
+        min_fde = minFDE(pred_for_metrics, gt).mean()
+
+        return {
+            "minADE": min_ade,
+            "minFDE": min_fde,
+        }
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.model.parameters(), lr=self.lr)
@@ -134,8 +171,53 @@ class SimplLightningModule(pl.LightningModule):
             pts_global = Rk @ pts.transpose(-1, -2)
             pts_global = pts_global.transpose(-1, -2) + tk  # (..., N, K, T, 2)
             return pts_global
-        
-        
+
+    # def _log_min_metrics(self, post_out: tuple, batch: dict, prefix: str):
+    #     """Compute and log minADE/FDE for the target agent."""
+    #     target_preds = self._get_target_preds(post_out)
+    #     if target_preds is None:
+    #         return
+
+    #     if target_preds.dim() == 3:
+    #         target_preds = target_preds.unsqueeze(1)
+
+    #     target_gt = batch["agent_future_pos"][:, 0]
+
+    #     min_ade = minADE(target_preds, target_gt).mean()
+    #     min_fde = minFDE(target_preds, target_gt).mean()
+
+    #     batch_size = target_gt.shape[0]
+    #     self.log(
+    #         f"{prefix}/minADE",
+    #         min_ade,
+    #         prog_bar=True,
+    #         on_epoch=True,
+    #         batch_size=batch_size,
+    #     )
+    #     self.log(
+    #         f"{prefix}/minFDE",
+    #         min_fde,
+    #         prog_bar=True,
+    #         on_epoch=True,
+    #         batch_size=batch_size,
+    #     )
+
+    # def _get_target_preds(self, post_out: tuple) -> Optional[torch.Tensor]:
+    #     res_reg_global = post_out[1]
+    #     if res_reg_global is None or len(res_reg_global) == 0:
+    #         return None
+
+    #     target_preds = []
+    #     for sample_preds in res_reg_global:
+    #         if sample_preds.shape[0] == 0:
+    #             continue
+    #         target_preds.append(sample_preds[0])
+
+    #     if not target_preds:
+    #         return None
+
+    #     return torch.stack(target_preds, dim=0)
+
     def _get_agent_types(self, batch, index: int = 0):
         # ObjectType.VEHICLE: 0,
         # ObjectType.PEDESTRIAN: 1,
@@ -147,7 +229,7 @@ class SimplLightningModule(pl.LightningModule):
         # where 7 is one-hot encoding of object type {vehicle, pedestrian, motorcyclist, cyclist, bus, unknown, default}
         agent_history = batch["agent_history"][index]  # (num_agents, 50-2, 14)
         agent_history_mask = batch["agent_history_mask"][index].bool()  # (na, 50-2)
-        
+
         valid_agent_history = agent_history[agent_history_mask.any(-1)]
         agent_types = []
         for agent in valid_agent_history:
@@ -186,12 +268,12 @@ class SimplLightningModule(pl.LightningModule):
         lane_feats = batch["lane_feats"][index]
         node_ctrs = lane_feats[:, :, :2]
         node_vecs = lane_feats[:, :, 2:4]
-        
+
         node_pts = node_ctrs - node_vecs * 0.5  # (num_nodes, 2)
         # add one more pts
         node_pts_shifted = node_ctrs + node_vecs * 0.5
         # node_pts = torch.cat([node_pts, node_pts_shifted[-1, :].unsqueeze(0)], dim=0)  # (num_nodes+1, 2)
-        
+
         lane_mask = batch["lane_masks"][index]
         lane_anchor_points_global = batch["lane_ctrs"][index]
         lane_anchor_vecs_globals = batch["lane_vecs"][index]
@@ -249,10 +331,10 @@ class SimplLightningModule(pl.LightningModule):
 
         return {
             "lane_points": lane_pts_global,
-            "agent_history": _detach(agent_history_pos_global),
-            "agent_future": _detach(agent_future_pos_global),
-            "agent_history_mask": _detach(agent_history_mask.bool()),
-            "agent_future_mask": _detach(agent_future_mask.bool()),
+            "agent_hist_pos": _detach(agent_history_pos_global),
+            "agent_fut_pos": _detach(agent_future_pos_global),
+            "agent_hist_mask": _detach(agent_history_mask.bool()),
+            "agent_fut_mask": _detach(agent_future_mask.bool()),
             "agent_last_pos": _detach(agent_last_pos_global),
             "target_agent_idx": target_agent_idx,
             "preds": _detach(preds),

@@ -6,3 +6,7 @@
 - [x] fix global step issue
 - [ ] simpl dataset augmentation
 - [x] lane plot, don't use centerline but boundareis
+- [ ] merge same pre-preprocessing of av2 simpl and vectornet and etc.
+- [ ] simpl wrong probability value
+- [ ] viz ade and fde in plot
+- [ ] add ade and fde in val log

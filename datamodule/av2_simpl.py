@@ -55,7 +55,9 @@ class AV2SimplDatamodule(pl.LightningDataModule):
             )
             self.val_dataset = AV2SimplDataset(split=self.val_split, **common_kwargs)
 
-        if stage in ("test", None):
+        # if stage in ("test", None):
+        else:
+            self.val_dataset = AV2SimplDataset(split=self.val_split, **common_kwargs)
             self.test_dataset = AV2SimplDataset(split=self.test_split, **common_kwargs)
 
     def train_dataloader(self) -> DataLoader:
