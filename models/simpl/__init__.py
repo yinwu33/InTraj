@@ -1,103 +1,94 @@
 from typing import Optional
 
 import torch
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 import pytorch_lightning as pl
 
 from .simpl import Simpl
 
-from ..metrics import ADE, FDE, minADE, minFDE
+from ..metrics import minADE, minFDE
 
 
 class SimplLightningModule(pl.LightningModule):
-    def __init__(self, lr, *args, **kwargs):
+    def __init__(self, cfg, *args, **kwargs):
         super().__init__()
-        self.save_hyperparameters()
-        self.lr = lr
+        self.cfg = cfg
+        
         self.model = Simpl(*args, **kwargs)
         self.k = self.model.pred_net.k
+        
+        self.save_hyperparameters()
 
     def forward(self, batch: dict) -> torch.Tensor:
         return self.model(batch)
 
     def training_step(self, batch, batch_idx):
         out = self.model(batch)  # out = (res_cls, res_reg, res_aux)
-        # post_out = self.model.post_process(out)
         post_out = self._post_process(out, batch)
         losses = self.model.loss(post_out, batch)
 
         B = len(post_out[0])
 
+        self.log("train/loss_step", losses["loss"], on_step=True, batch_size=B)
         self.log(
-            "train/loss_step",
-            losses["loss"],
-            on_step=True,
-            on_epoch=False,
-            prog_bar=False,
-            batch_size=B,
+            "train/loss", losses["loss"], on_epoch=True, prog_bar=True, batch_size=B
         )
-        self.log(
-            "train/loss",
-            losses["loss"],
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            batch_size=B,
-        )
-        return losses["loss"]
+        return {
+            **losses,
+            "pred": post_out[1],
+            "logits": post_out[0],
+        }
 
     def validation_step(self, batch: dict, batch_idx: int):
         out = self.model(batch)  # out = (res_cls, res_reg, res_aux)
-        # post_out = self.model.post_process(out)
         post_out = self._post_process(out, batch)
         losses = self.model.loss(post_out, batch)
+
         B = len(post_out[0])
+
+        metrics = self.calculate_metrics(post_out[1], batch)
+        losses.update(metrics)
+
+        self.log("val/loss", losses["loss"], on_epoch=True, prog_bar=True, batch_size=B)
+
         self.log(
-            "val/loss",
-            losses["loss"],
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            batch_size=B,
+            "val/minADE", metrics["minADE"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+        self.log(
+            "val/minFDE", metrics["minFDE"], on_epoch=True, prog_bar=True, batch_size=B
         )
 
-        # self._log_min_metrics(post_out, batch, prefix="val")
-
-        # if self.model.k == 1:
-        #     # single modal metrics ade, fde
-        #     ade = ADE(pred, batch["target_gt"]).mean()
-        #     fde = FDE(pred, batch["target_gt"]).mean()
-        #     self.log("val/ADE", ade, prog_bar=True, on_epoch=True,
-        #              batch_size=batch["target_gt"].shape[0])
-        #     self.log("val/FDE", fde, prog_bar=True, on_epoch=True,
-        #              batch_size=batch["target_gt"].shape[0])
-        # else:
-        #     # multi modal metrics minade, minfde
-        #     min_ade = minADE(pred, batch["target_gt"]).mean()
-        #     min_fde = minFDE(pred, batch["target_gt"]).mean()
-        #     self.log("val/minADE", min_ade, prog_bar=True,
-        #              on_epoch=True, batch_size=batch["target_gt"].shape[0])
-        #     self.log("val/minFDE", min_fde, prog_bar=True,
-        #              on_epoch=True, batch_size=batch["target_gt"].shape[0])
+        return {
+            **losses,
+            "pred": post_out[1],
+            "logits": post_out[0],
+        }
 
     def test_step(self, batch: dict, batch_idx: int):
         out = self.model(batch)
         post_out = self._post_process(out, batch)
         losses = self.model.loss(post_out, batch)
-        
-        metrics = self.calculate_metrics(post_out[1], batch["target_gt"])
+
+        B = len(post_out[0])
+
+        metrics = self.calculate_metrics(post_out[1], batch)
         losses.update(metrics)
-        
+
         self.log(
-            "test/loss",
-            losses["loss"],
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-            batch_size=len(post_out[0]),
+            "test/loss", losses["loss"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+        self.log(
+            "test/minADE", metrics["minADE"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+        self.log(
+            "test/minFDE", metrics["minFDE"], on_epoch=True, prog_bar=True, batch_size=B
         )
 
-        self._log_min_metrics(post_out, batch, prefix="test")
-        return losses["loss"]
+        return {
+            **losses,
+            "pred": post_out[1],
+            "logits": post_out[0],
+        }
 
     def _post_process(self, out: tuple, batch: dict) -> dict:
         res_cls, res_reg, res_aux = out
@@ -120,19 +111,34 @@ class SimplLightningModule(pl.LightningModule):
 
         return res_cls, res_reg_global, res_aux
 
-    def calculate_metrics(self, pred: torch.Tensor, gt: torch.Tensor) -> dict:
-        """Calculate minADE and minFDE for given predictions and ground truth."""
-        if pred is None:
-            return {}
+    def calculate_metrics(self, pred: list, batch: torch.Tensor) -> dict:
+        """Calculate minADE and minFDE for given predictions and ground truth.
+        pred: list of [(num_agents, k, T, 2)]
+        gt: (B, num_agents, T, 2)
+        """
+        B = len(pred)
 
-        if pred.dim() == 3:
-            # single modal output -> expand to [B, 1, T, 2]
-            pred_for_metrics = pred.unsqueeze(1)
-        else:
-            pred_for_metrics = pred
+        agent_future_pos = batch["agent_future_pos"]
+        agent_history_mask = batch["agent_history_mask"].bool()
 
-        min_ade = minADE(pred_for_metrics, gt).mean()
-        min_fde = minFDE(pred_for_metrics, gt).mean()
+        min_ade_list = []
+        min_fde_list = []
+
+        for i in range(B):
+            i_pred = pred[i]  # (num_agents, k, T, 2)
+            i_gt = agent_future_pos[i]  # (num_agents, T, 2)
+
+            mask = agent_history_mask[i]
+            valid_agents = mask.any(dim=1)  # (num_agents,)
+            i_gt = i_gt[valid_agents]  # (num_valid, T, 2)
+
+            min_ade = minADE(i_pred, i_gt).mean()
+            min_fde = minFDE(i_pred, i_gt).mean()
+            min_ade_list.append(min_ade)
+            min_fde_list.append(min_fde)
+
+        min_ade = torch.stack(min_ade_list).mean()
+        min_fde = torch.stack(min_fde_list).mean()
 
         return {
             "minADE": min_ade,
@@ -140,7 +146,35 @@ class SimplLightningModule(pl.LightningModule):
         }
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.cfg.optimizer.lr,
+            weight_decay=self.cfg.optimizer.weight_decay,
+        )
+
+        max_epochs = self.trainer.max_epochs
+        B = self.cfg.datamodule.batch_size
+        len_dataset = self.cfg.datamodule.train_size
+        steps_per_epoch = len_dataset // B
+        total_steps = max_epochs * steps_per_epoch
+
+        warmup_steps = total_steps * self.cfg.optimizer.warmup_ratio
+        warmup = LinearLR(
+            optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_steps
+        )
+        main = CosineAnnealingLR(optimizer, T_max=max(1, total_steps - warmup_steps))
+        scheduler = SequentialLR(
+            optimizer, schedulers=[warmup, main], milestones=[warmup_steps]
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",  # 关键：按 step 调
+                "frequency": 1,
+            },
+        }
 
     def run_forward_postprocess(self, batch: dict) -> torch.Tensor:
         out = self.model(batch)
@@ -171,52 +205,6 @@ class SimplLightningModule(pl.LightningModule):
             pts_global = Rk @ pts.transpose(-1, -2)
             pts_global = pts_global.transpose(-1, -2) + tk  # (..., N, K, T, 2)
             return pts_global
-
-    # def _log_min_metrics(self, post_out: tuple, batch: dict, prefix: str):
-    #     """Compute and log minADE/FDE for the target agent."""
-    #     target_preds = self._get_target_preds(post_out)
-    #     if target_preds is None:
-    #         return
-
-    #     if target_preds.dim() == 3:
-    #         target_preds = target_preds.unsqueeze(1)
-
-    #     target_gt = batch["agent_future_pos"][:, 0]
-
-    #     min_ade = minADE(target_preds, target_gt).mean()
-    #     min_fde = minFDE(target_preds, target_gt).mean()
-
-    #     batch_size = target_gt.shape[0]
-    #     self.log(
-    #         f"{prefix}/minADE",
-    #         min_ade,
-    #         prog_bar=True,
-    #         on_epoch=True,
-    #         batch_size=batch_size,
-    #     )
-    #     self.log(
-    #         f"{prefix}/minFDE",
-    #         min_fde,
-    #         prog_bar=True,
-    #         on_epoch=True,
-    #         batch_size=batch_size,
-    #     )
-
-    # def _get_target_preds(self, post_out: tuple) -> Optional[torch.Tensor]:
-    #     res_reg_global = post_out[1]
-    #     if res_reg_global is None or len(res_reg_global) == 0:
-    #         return None
-
-    #     target_preds = []
-    #     for sample_preds in res_reg_global:
-    #         if sample_preds.shape[0] == 0:
-    #             continue
-    #         target_preds.append(sample_preds[0])
-
-    #     if not target_preds:
-    #         return None
-
-    #     return torch.stack(target_preds, dim=0)
 
     def _get_agent_types(self, batch, index: int = 0):
         # ObjectType.VEHICLE: 0,

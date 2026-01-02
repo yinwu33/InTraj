@@ -8,3 +8,7 @@ batch_size: 256
 num_workers: 32
 pin_memory: false
 persistent_workers: true
+
+train_size: 199908
+val_size: 24998
+test_size: 24984

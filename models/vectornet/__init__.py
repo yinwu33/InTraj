@@ -1,9 +1,9 @@
 from typing import List, Dict, Tuple
 
 import torch
-import pytorch_lightning as pl
-
 from torch.nn import functional as F
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
+import pytorch_lightning as pl
 
 from .vectornet import VectorNetTrajPred
 
@@ -11,11 +11,11 @@ from ..metrics import ADE, FDE, minADE, minFDE
 
 
 class VectorNetLightningModule(pl.LightningModule):
-    def __init__(self, lr, *args, **kwargs):
+    def __init__(self, cfg, *args, **kwargs):
         super().__init__()
-        self.save_hyperparameters()
-        self.lr = lr
+        self.cfg = cfg
         self.model = VectorNetTrajPred(*args, **kwargs)
+        self.save_hyperparameters()
 
     def forward(self, batch: dict) -> torch.Tensor:
         return self.model(batch)
@@ -24,9 +24,15 @@ class VectorNetLightningModule(pl.LightningModule):
         pred, logits = self.model(batch)
         losses = self.model.loss(pred, logits, batch)
 
-        self._log_losses(losses, "train", batch_size=batch["target_gt"].shape[0])
+        B = batch["target_gt"].shape[0]
+
+        self.log("train/loss_step", losses["loss"], on_step=True, batch_size=B)
+        self.log(
+            "train/loss", losses["loss"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+
         return {
-            "loss": losses["loss"],
+            **losses,
             "pred": pred,
             "logits": logits,
         }
@@ -35,10 +41,20 @@ class VectorNetLightningModule(pl.LightningModule):
         pred, logits = self.model(batch)
         losses = self.model.loss(pred, logits, batch)
 
-        self._log_losses(losses, "val", batch_size=batch["target_gt"].shape[0])
+        B = batch["target_gt"].shape[0]
+        metrics = self.calculate_metrics(pred, batch["target_gt"])
+        losses.update(metrics)
+
+        self.log("val/loss", losses["loss"], on_epoch=True, prog_bar=True, batch_size=B)
+        self.log(
+            "val/minADE", metrics["minADE"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+        self.log(
+            "val/minFDE", metrics["minFDE"], on_epoch=True, prog_bar=True, batch_size=B
+        )
 
         return {
-            "loss": losses["loss"],
+            **losses,
             "pred": pred,
             "logits": logits,
         }
@@ -46,30 +62,57 @@ class VectorNetLightningModule(pl.LightningModule):
     def test_step(self, batch: dict, batch_idx: int):
         pred, logits = self.model(batch)
         losses = self.model.loss(pred, logits, batch)
-        metrics = self.calculate_metrics(pred, batch["target_gt"])
 
+        B = batch["target_gt"].shape[0]
+        metrics = self.calculate_metrics(pred, batch["target_gt"])
         losses.update(metrics)
 
-        self._log_losses(losses, "test", batch_size=batch["target_gt"].shape[0])
+        self.log(
+            "test/loss", losses["loss"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+        self.log(
+            "test/minADE", metrics["minADE"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+        self.log(
+            "test/minFDE", metrics["minFDE"], on_epoch=True, prog_bar=True, batch_size=B
+        )
+
         return {
-            "loss": losses["loss"],
+            **losses,
             "pred": pred,
             "logits": logits,
         }
 
-    def _log_losses(self, loss_dict, prefix: str, batch_size: int):
-        for k, v in loss_dict.items():
-            self.log(
-                f"{prefix}/{k}",
-                v,
-                prog_bar=True,
-                on_epoch=True,
-                on_step=True,
-                batch_size=batch_size,
-            )
-
     def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.cfg.optimizer.lr,
+            weight_decay=self.cfg.optimizer.weight_decay,
+        )
+
+        max_epochs = self.trainer.max_epochs
+        B = self.cfg.datamodule.batch_size
+        len_dataset = self.cfg.datamodule.train_size
+        steps_per_epoch = len_dataset // B
+        total_steps = max_epochs * steps_per_epoch
+
+        warmup_steps = total_steps * self.cfg.optimizer.warmup_ratio
+        warmup = LinearLR(
+            optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_steps
+        )
+        main = CosineAnnealingLR(optimizer, T_max=max(1, total_steps - warmup_steps))
+        scheduler = SequentialLR(
+            optimizer, schedulers=[warmup, main], milestones=[warmup_steps]
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",  # 关键：按 step 调
+                "frequency": 1,
+            },
+        }
 
     # cal metrics of minade and minfde
     def calculate_metrics(

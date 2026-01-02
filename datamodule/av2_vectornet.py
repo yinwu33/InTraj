@@ -26,8 +26,11 @@ class AV2VectorNetDatamodule(pl.LightningDataModule):
         num_workers: int = 4,
         pin_memory: bool = True,
         persistent_workers: bool = True,
+        cfg=None,
+        **kwargs,
     ):
         super().__init__()
+        self.cfg = cfg
 
         self.data_root = data_root
         self.train_split = train_split

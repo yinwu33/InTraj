@@ -17,3 +17,6 @@ ckpt_dir: ${output_root_dir}/ckpt
 hydra:
   run:
     dir: ${output_root_dir}
+
+trainer:
+  max_epochs: 50

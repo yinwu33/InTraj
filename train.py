@@ -41,9 +41,9 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
 def main(cfg: DictConfig) -> None:
     pl.seed_everything(cfg.seed)
 
-    dm = instantiate(cfg.datamodule)
-    model = instantiate(cfg.model, lr=cfg.optimizer.lr)
-    
+    dm = instantiate(cfg.datamodule, cfg=cfg, _recursive_=False)
+    model = instantiate(cfg.model, cfg=cfg, _recursive_=False)
+
     # print("Compiling model...")
     # model = torch.compile(model)
     # print("Model compiled.")
