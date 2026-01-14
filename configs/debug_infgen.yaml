@@ -1,0 +1,30 @@
+defaults:
+  - datamodule: av2_infgen
+  - model: infgen
+  - trainer: default
+  - logger: wandb
+  - callbacks: default
+  - optimizer: adamw
+  - experiment: null
+  - _self_
+
+project_name: infgen
+exp_name: test
+seed: 42
+resume_from: null
+output_root_dir: ./outputs/${project_name}/${exp_name}/${now:%Y-%m-%d_%H-%M-%S}
+ckpt_dir: ${output_root_dir}/ckpt
+
+hydra:
+  run:
+    dir: ${output_root_dir}
+
+trainer:
+  precision: "32-true"
+  max_epochs: 1
+  accelerator: cpu
+datamodule:
+  batch_size: 1
+  num_workers: 0
+
+callbacks: null

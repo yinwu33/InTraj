@@ -1,0 +1,38 @@
+_target_: datamodule.av2_infgen.MultiDataModule
+root: null
+train_batch_size: 4
+val_batch_size: 4
+test_batch_size: 4
+shuffle: True
+num_workers: 16
+pin_memory: False
+persistent_workers: True
+train_raw_dir: "cache/av2_infgen/train"
+val_raw_dir: "cache/av2_infgen/val"
+test_raw_dir: "cache/av2_infgen/val"
+val_tfrecords_splitted: cache/av2_infgen/null
+transform: WaymoTargetBuilder
+train_processed_dir:
+val_processed_dir:
+test_processed_dir:
+dataset: "scalable"
+num_historical_steps: 11
+num_future_steps: 80
+use_intention: True
+token_size: 2048
+predict_motion: True
+predict_state: True
+predict_map: True
+predict_occ: True
+state_token:
+  invalid: 0
+  valid: 1
+  enter: 2
+  exit: 3
+pl2seed_radius: 75.
+grid_range: 150. # 2 times of pl2seed_radius
+grid_interval: 3.
+angle_interval: 3.
+seed_size: 1
+buffer_size: 128
+max_num: 32
