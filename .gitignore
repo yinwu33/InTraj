@@ -6,3 +6,5 @@ outputs
 output
 
 cache/*
+checkpoints/
+checkpoint/

@@ -84,6 +84,44 @@ class VectorNetLightningModule(pl.LightningModule):
         losses = self.model.loss(pred, logits, batch)
 
         self._log_losses(losses, "test", batch_size=batch["target_gt"].shape[0])
+
+        if self.model.k == 1:
+            # single modal metrics ade, fde
+            ade = ADE(pred, batch["target_gt"]).mean()
+            fde = FDE(pred, batch["target_gt"]).mean()
+            self.log(
+                "test/ADE",
+                ade,
+                prog_bar=True,
+                on_epoch=True,
+                batch_size=batch["target_gt"].shape[0],
+            )
+            self.log(
+                "test/FDE",
+                fde,
+                prog_bar=True,
+                on_epoch=True,
+                batch_size=batch["target_gt"].shape[0],
+            )
+        else:
+            # multi modal metrics minade, minfde
+            min_ade = minADE(pred, batch["target_gt"]).mean()
+            min_fde = minFDE(pred, batch["target_gt"]).mean()
+            self.log(
+                "test/minADE",
+                min_ade,
+                prog_bar=True,
+                on_epoch=True,
+                batch_size=batch["target_gt"].shape[0],
+            )
+            self.log(
+                "test/minFDE",
+                min_fde,
+                prog_bar=True,
+                on_epoch=True,
+                batch_size=batch["target_gt"].shape[0],
+            )
+
         return {
             "loss": losses["loss"],
             "pred": pred,

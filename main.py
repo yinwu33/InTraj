@@ -55,8 +55,19 @@ def main(cfg: DictConfig) -> None:
         callbacks=build_callbacks(cfg),
         **cfg.trainer,
     )
-    trainer.fit(model, datamodule=dm, ckpt_path=cfg.get("resume_from"))
-    trainer.test(model, datamodule=dm)
+
+    mode = str(cfg.get("mode", "train")).lower()
+    if mode == "train":
+        trainer.fit(model, datamodule=dm, ckpt_path=cfg.get("resume_from"))
+    elif mode == "eval":
+        ckpt_path = cfg.get("resume_from")
+        if ckpt_path is None:
+            raise ValueError(
+                "In eval mode, please provide checkpoint via eval_ckpt=... or resume_from=..."
+            )
+        trainer.test(model, datamodule=dm, ckpt_path=ckpt_path)
+    else:
+        raise ValueError(f"Unsupported mode: {mode}. Expected one of: train, eval")
 
 
 if __name__ == "__main__":

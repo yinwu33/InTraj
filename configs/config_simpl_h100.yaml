@@ -10,6 +10,7 @@ defaults:
 project_name: simpl
 exp_name: test
 seed: 42
+mode: train
 resume_from: null
 output_root_dir: ./outputs/${project_name}/${exp_name}/${now:%Y-%m-%d_%H-%M-%S}
 ckpt_dir: ${output_root_dir}/ckpt

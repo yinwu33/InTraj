@@ -76,10 +76,40 @@ class SimplLightningModule(pl.LightningModule):
         #              on_epoch=True, batch_size=batch["target_gt"].shape[0])
 
     def test_step(self, batch: dict, batch_idx: int):
-        res_cls, res_reg, res_aux = self.model(batch)
-        out = self.model.post_process((res_cls, res_reg, res_aux))
-        pred = out["traj_pred"]
-        logits = out["prob_pred"]
+        out = self.model(batch)  # out = (res_cls, res_reg, res_aux)
+        post_out = self._post_process(out, batch)
+        losses = self.model.loss(post_out, batch)
+        B = len(post_out[0])
+        self.log(
+            "test/loss",
+            losses["loss"],
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=B,
+        )
+
+        target_gt = batch.get("target_gt")
+        if target_gt is not None:
+            pred = post_out[1]  # res_reg_global
+            if self.model.k == 1:
+                # single modal metrics ade, fde
+                ade = ADE(pred, target_gt).mean()
+                fde = FDE(pred, target_gt).mean()
+                self.log("test/ADE", ade, prog_bar=True, on_epoch=True, batch_size=B)
+                self.log("test/FDE", fde, prog_bar=True, on_epoch=True, batch_size=B)
+            else:
+                # multi modal metrics minade, minfde
+                min_ade = minADE(pred, target_gt).mean()
+                min_fde = minFDE(pred, target_gt).mean()
+                self.log("test/minADE", min_ade, prog_bar=True, on_epoch=True, batch_size=B)
+                self.log("test/minFDE", min_fde, prog_bar=True, on_epoch=True, batch_size=B)
+
+        return {
+            "loss": losses["loss"],
+            "pred": post_out[1],
+            "logits": post_out[0],
+        }
 
     def _post_process(self, out: tuple, batch: dict) -> dict:
         res_cls, res_reg, res_aux = out
@@ -178,9 +208,13 @@ class SimplLightningModule(pl.LightningModule):
         with torch.no_grad():
             out = self.model(batch)
             post_out = self._post_process(out, batch)
-        logits = post_out[0][index]  # traj logits for all agents
+        probs = post_out[0][index]  # traj probs for all agents
         preds = post_out[1][index]  # traj preds for all agents
-        probs = torch.softmax(logits, dim=0)
+
+        # keep per-agent modal probabilities normalized on mode dimension
+        prob_sums = probs.sum(dim=-1)
+        if not torch.allclose(prob_sums, torch.ones_like(prob_sums), atol=1e-3, rtol=1e-3):
+            probs = torch.softmax(probs, dim=-1)
 
         # gather current sample
         lane_feats = batch["lane_feats"][index]

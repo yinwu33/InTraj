@@ -61,6 +61,21 @@ class TrajectoryVisualizationCallback(pl.Callback):
         self._log_first_scenario(trainer, pl_module, outputs, batch, stage="val")
         self._val_logged = True
 
+    def on_test_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Any,
+        batch: Dict[str, Any],
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        # Log only the first batch during test
+        if batch_idx > 0:
+            return
+        self._log_first_scenario(trainer, pl_module, outputs, batch, stage="test")
+        plt.close("all")
+
     def _log_first_scenario(
         self,
         trainer: pl.Trainer,
