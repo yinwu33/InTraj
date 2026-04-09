@@ -1,0 +1,20 @@
+defaults:
+  - _self_
+  - datamodule: av2_qcnet
+  - model: qcnet
+  - trainer: default
+  - logger: wandb
+  - optimizer: adamw
+  - experiment: null
+
+project_name: qcnet
+exp_name: test
+seed: 42
+mode: train
+resume_from: null
+output_root_dir: ./outputs/${project_name}/${exp_name}/${now:%Y-%m-%d_%H-%M-%S}
+ckpt_dir: ${output_root_dir}/ckpt
+
+hydra:
+  run:
+    dir: ${output_root_dir}

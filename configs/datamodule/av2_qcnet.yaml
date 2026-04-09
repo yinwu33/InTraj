@@ -1,0 +1,15 @@
+_target_: datamodule.AV2QCNetDatamodule
+
+defaults:
+  - av2_base
+
+batch_size: 8
+num_workers: 8
+pin_memory: false
+
+dataset:
+  dim: 3
+  num_historical_steps: 50
+  num_future_steps: 60
+  predict_unseen_agents: false
+  vector_repr: true

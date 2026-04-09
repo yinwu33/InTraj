@@ -1,0 +1,42 @@
+2026-01-11 13:44:36,019-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:44:36,312-DEBUG-scalable_dataset.py-Line:61-Message:The number of train dataset is 199908
+2026-01-11 13:44:36,388-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:44:36,424-DEBUG-scalable_dataset.py-Line:61-Message:The number of val dataset is 24988
+2026-01-11 13:44:36,434-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:44:36,435-DEBUG-scalable_dataset.py-Line:61-Message:The number of test dataset is 0
+2026-01-11 13:45:35,194-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:45:35,354-DEBUG-scalable_dataset.py-Line:61-Message:The number of train dataset is 199908
+2026-01-11 13:45:35,417-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:45:35,445-DEBUG-scalable_dataset.py-Line:61-Message:The number of val dataset is 24988
+2026-01-11 13:45:35,458-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:45:35,458-DEBUG-scalable_dataset.py-Line:61-Message:The number of test dataset is 0
+2026-01-11 13:46:39,704-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:46:40,319-DEBUG-scalable_dataset.py-Line:61-Message:The number of train dataset is 199908
+2026-01-11 13:46:40,384-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:46:40,462-DEBUG-scalable_dataset.py-Line:61-Message:The number of val dataset is 24988
+2026-01-11 13:46:40,474-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:46:40,475-DEBUG-scalable_dataset.py-Line:61-Message:The number of test dataset is 0
+2026-01-11 13:48:03,543-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:48:04,156-DEBUG-scalable_dataset.py-Line:61-Message:The number of train dataset is 199908
+2026-01-11 13:48:04,215-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:48:04,289-DEBUG-scalable_dataset.py-Line:61-Message:The number of val dataset is 24988
+2026-01-11 13:48:04,326-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:48:04,326-DEBUG-scalable_dataset.py-Line:61-Message:The number of test dataset is 0
+2026-01-11 13:49:05,532-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:49:06,153-DEBUG-scalable_dataset.py-Line:61-Message:The number of train dataset is 199908
+2026-01-11 13:49:06,226-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:49:06,303-DEBUG-scalable_dataset.py-Line:61-Message:The number of val dataset is 24988
+2026-01-11 13:49:06,343-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:49:06,343-DEBUG-scalable_dataset.py-Line:61-Message:The number of test dataset is 0
+2026-01-11 13:50:53,130-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:50:53,426-DEBUG-scalable_dataset.py-Line:61-Message:The number of train dataset is 199908
+2026-01-11 13:50:53,494-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:50:53,532-DEBUG-scalable_dataset.py-Line:61-Message:The number of val dataset is 24988
+2026-01-11 13:50:53,545-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:50:53,545-DEBUG-scalable_dataset.py-Line:61-Message:The number of test dataset is 0
+2026-01-11 13:57:46,403-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:57:47,044-DEBUG-scalable_dataset.py-Line:61-Message:The number of train dataset is 199908
+2026-01-11 13:57:47,111-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:57:47,190-DEBUG-scalable_dataset.py-Line:61-Message:The number of val dataset is 24988
+2026-01-11 13:57:47,214-DEBUG-scalable_dataset.py-Line:38-Message:Starting loading dataset
+2026-01-11 13:57:47,215-DEBUG-scalable_dataset.py-Line:61-Message:The number of test dataset is 0

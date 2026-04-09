@@ -1,0 +1,28 @@
+_target_: models.SMART
+
+dataset: argoverse_v2
+input_dim: 2
+hidden_dim: 128
+output_dim: 2
+output_head: false
+num_heads: 8
+num_historical_steps: ${datamodule.dataset.num_historical_steps}
+num_future_steps: ${datamodule.dataset.num_future_steps}
+head_dim: 16
+dropout: 0.1
+num_freq_bands: 64
+warmup_steps: 0
+total_steps: 1000
+agent_token_path: null
+map_token_path: null
+inference_token: false
+
+decoder:
+  num_future_steps: ${datamodule.dataset.num_future_steps}
+  token_size: ${datamodule.dataset.token_size}
+  num_map_layers: 3
+  num_agent_layers: 6
+  a2a_radius: 60.0
+  pl2pl_radius: 10.0
+  pl2a_radius: 30.0
+  time_span: 30

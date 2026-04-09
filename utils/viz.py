@@ -76,8 +76,6 @@ def plot_scenario(
 
     valid_agents = agnet_history_mask_np.any(-1)
     valid_indices = np.where(valid_agents)[0]
-    num_agents = valid_agents.sum()
-    agent_history_np = agent_history_np[valid_agents]
 
     fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
 
@@ -124,7 +122,7 @@ def plot_scenario(
     # plot predictions
     if preds_np.ndim == 4:
         # [n, k, t, 2]
-        for idx in range(num_agents):
+        for idx in range(preds_np.shape[0]):
             agent_score_type = score_types[idx]
             if agent_score_type not in _SCORE_TYPES:
                 continue

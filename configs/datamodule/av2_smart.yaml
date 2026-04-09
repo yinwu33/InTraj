@@ -1,0 +1,17 @@
+_target_: datamodule.AV2SMARTDatamodule
+
+defaults:
+  - av2_base
+
+batch_size: 4
+num_workers: 8
+pin_memory: false
+
+dataset:
+  num_historical_steps: 11
+  num_future_steps: 80
+  token_size: 2048
+  raw_dir: null
+  processed_dir: null
+  agent_token_path: null
+  map_token_path: null
