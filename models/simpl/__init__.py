@@ -167,34 +167,31 @@ class SimplLightningModule(pl.LightningModule):
         
         
     def _get_agent_types(self, batch, index: int = 0):
-        # ObjectType.VEHICLE: 0,
-        # ObjectType.PEDESTRIAN: 1,
-        # ObjectType.MOTORCYCLIST: 2,
-        # ObjectType.CYCLIST: 3,
-        # ObjectType.BUS: 4,
-        # ObjectType.UNKNOWN: 5,
-        # agent_history is 14 with 2+2+2+7+1
-        # where 7 is one-hot encoding of object type {vehicle, pedestrian, motorcyclist, cyclist, bus, unknown, default}
-        agent_history = batch["agent_history"][index]  # (num_agents, 50-2, 14)
-        agent_history_mask = batch["agent_history_mask"][index].bool()  # (na, 50-2)
-        
-        valid_agent_history = agent_history[agent_history_mask.any(-1)]
+        simpl_agent_types = (
+            "vehicle",
+            "pedestrian",
+            "cyclist",
+            "motorcyclist",
+            "bus",
+            "static",
+            "unknown",
+        )
+
+        agent_type_indices = batch["agent_type"][index]
+        agent_history_mask = batch["agent_history_mask"][index].bool()
+
         agent_types = []
-        for agent in valid_agent_history:
-            obj_type_onehot = agent[:, 7:14].sum(dim=0)  # (7,)
-            obj_type_idx = torch.argmax(obj_type_onehot).item()
-            if obj_type_idx == 0:
-                agent_types.append("vehicle")
-            elif obj_type_idx == 1:
-                agent_types.append("pedestrian")
-            elif obj_type_idx == 2:
-                agent_types.append("motorcyclist")
-            elif obj_type_idx == 3:
-                agent_types.append("cyclist")
-            elif obj_type_idx == 4:
-                agent_types.append("bus")
-            else:
+        for agent_idx in range(agent_history_mask.shape[0]):
+            if not agent_history_mask[agent_idx].any():
                 agent_types.append("unknown")
+                continue
+
+            obj_type_idx = int(agent_type_indices[agent_idx].item())
+            if not 0 <= obj_type_idx < len(simpl_agent_types):
+                raise ValueError(
+                    f"Unexpected SIMPL agent type index {obj_type_idx} at sample {index}, agent {agent_idx}"
+                )
+            agent_types.append(simpl_agent_types[obj_type_idx])
         return agent_types
 
     def create_scenario(self, batch, outputs, index: int = 0):
