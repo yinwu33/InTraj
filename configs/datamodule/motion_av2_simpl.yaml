@@ -1,0 +1,45 @@
+_target_: datamodule.SimplDatamodule
+
+data_root: ${oc.env:AV2_DATA_ROOT}
+
+train_split: train
+val_split: val
+test_split: test
+
+batch_size: 8
+num_workers: 8
+pin_memory: false
+persistent_workers: true
+
+dataset:
+  source: av2
+  cache_root: cache/motiondataset
+  builder_kwargs: {}
+  history_steps: 50
+  future_steps: 60
+  truncate_steps: 2
+  radius: 100.0
+  standardization:
+    history_steps: 50
+    future_steps: 60
+    dt: 0.1
+    coord_frame: local
+    align_heading: true
+    agents:
+      max_agents: 64
+      velocity_source: finite_difference
+      heading_source: prefer_input
+      include_size: false
+    map:
+      range_m: 100.0
+      precision_m: 0.5
+      max_polylines: 256
+      points_per_polyline: 11
+      crop_shape: circle
+      include_lane_centerlines: true
+      include_road_lines: true
+      include_road_edges: true
+      include_crosswalks: true
+      include_speed_bumps: true
+      include_driveways: true
+      include_drivable_areas: false
