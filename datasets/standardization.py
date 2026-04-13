@@ -107,6 +107,7 @@ _STANDARDIZATION_METADATA_KEY = "standardization"
 def standardize(
     dataset: MotionDataset,
     transform: Callable[[Any], Any] | None = None,
+    config: StandardizationConfig | None = None,
 ) -> MotionDataset:
     if not isinstance(dataset, MotionDataset):
         raise TypeError(f"standardize expects MotionDataset, got {type(dataset)!r}")
@@ -120,7 +121,7 @@ def standardize(
             raise TypeError(
                 "standardize(dataset) expects the input dataset to yield MotionScenario instances"
             )
-        standardized = standardize_scenario(sample)
+        standardized = standardize_scenario(sample, config=config)
         if transform is not None:
             return transform(standardized)
         return standardized
@@ -135,8 +136,9 @@ def standardize(
 
 def standardize_scenario(
     scenario: MotionScenario,
+    config: StandardizationConfig | None = None,
 ) -> MotionScenario:
-    config = StandardConfig
+    config = StandardConfig if config is None else config
 
     current_index, window_start, window_end, window_clamped = _resolve_source_window(
         scenario,

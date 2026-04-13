@@ -8,6 +8,14 @@ from .motion_dataset import (
     MotionTrack,
     ScenarioReference,
 )
+from .standardized_cache import (
+    build_standardized_record,
+    get_standardized_cache_path,
+    load_standardized_record,
+    normalize_source_name,
+    normalize_split_name,
+    save_standardized_record,
+)
 from .standardization import (
     CANONICAL_AGENT_TYPES,
     CANONICAL_MAP_TYPES,
@@ -43,8 +51,14 @@ __all__ = [
     "MotionScenario",
     "MotionTrack",
     "ScenarioReference",
+    "build_standardized_record",
     "CANONICAL_AGENT_TYPES",
     "CANONICAL_MAP_TYPES",
+    "get_standardized_cache_path",
+    "load_standardized_record",
+    "normalize_source_name",
+    "normalize_split_name",
+    "save_standardized_record",
     "StandardAgentConfig",
     "StandardConfig",
     "StandardMapConfig",
