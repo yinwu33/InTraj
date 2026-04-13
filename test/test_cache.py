@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from datamodule import SimplDatamodule
+from datamodule.simpl_datamodule import SimplDatamodule
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,11 +25,9 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "--sources",
-        nargs="+",
+        "--dataset",
         choices=("av2", "waymo"),
-        default=("av2", "waymo"),
-        help="Dataset sources to benchmark.",
+        default="av2",
     )
     parser.add_argument(
         "--split",
@@ -184,25 +182,21 @@ def main() -> None:
     load_dotenv(REPO_ROOT / ".env")
     args = parse_args()
 
-    results = []
-    for source in args.sources:
-        result = benchmark_source(
-            source=source,
-            split=args.split,
-            num_samples=args.num_samples,
-            cache_root=args.cache_root,
-        )
-        results.append(result)
+    result = benchmark_source(
+        source=args.dataset,
+        split=args.split,
+        num_samples=args.num_samples,
+        cache_root=args.cache_root,
+    )
 
     print("Cache benchmark results")
-    for result in results:
-        print(
-            f"[{result['source']}] split={result['split']} samples={result['sample_count']} "
-            f"cold={result['cold_seconds']:.3f}s ({result['cold_mean_seconds']:.3f}s/sample) "
-            f"warm={result['warm_seconds']:.3f}s ({result['warm_mean_seconds']:.3f}s/sample) "
-            f"speedup={result['speedup']:.2f}x cache_files={result['cache_files']}"
-        )
-        print(f"cache_dir={result['cache_dir']}")
+    print(
+        f"[{result['source']}] split={result['split']} samples={result['sample_count']} "
+        f"cold={result['cold_seconds']:.3f}s ({result['cold_mean_seconds']:.3f}s/sample) "
+        f"warm={result['warm_seconds']:.3f}s ({result['warm_mean_seconds']:.3f}s/sample) "
+        f"speedup={result['speedup']:.2f}x cache_files={result['cache_files']}"
+    )
+    print(f"cache_dir={result['cache_dir']}")
 
 
 if __name__ == "__main__":

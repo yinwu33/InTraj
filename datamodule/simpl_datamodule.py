@@ -11,7 +11,7 @@ from hydra.utils import to_absolute_path
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
-from ..datasets import (
+from datasets import (
     CANONICAL_AGENT_TYPES,
     CANONICAL_MAP_TYPES,
     MotionDataset,

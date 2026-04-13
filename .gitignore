@@ -13,3 +13,4 @@ reference/
 /*.png
 
 .codex
+.env
