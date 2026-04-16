@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,10 @@ from datasets import (
     CANONICAL_AGENT_TYPES,
     CANONICAL_MAP_TYPES,
     MotionDataset,
+    MotionLaneSegment,
+    MotionPolylineFeature,
+    MotionScenario,
+    MotionTrack,
     StandardAgentConfig,
     StandardMapConfig,
     StandardizationConfig,
@@ -58,6 +62,14 @@ _CANONICAL_TO_SIMPL_AGENT_TYPE = {
     "unknown": "unknown",
 }
 _YAW_LOSS_AGENT_TYPES = {"vehicle", "cyclist", "motorcyclist", "bus"}
+
+
+@dataclass(frozen=True)
+class _StandardizedMapFeatureRecord:
+    feature_id: str
+    feature_type: str
+    points: np.ndarray
+    is_intersection: bool = False
 
 
 def _dataclass_kwargs(cls: type[Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -179,6 +191,148 @@ def _score_label(is_ego: bool, is_target: bool, is_interest: bool) -> str:
     return "context"
 
 
+def _xy_to_xyz(xy_values: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    xyz = np.full((xy_values.shape[0], 3), np.nan, dtype=np.float32)
+    finite_mask = np.asarray(valid_mask, dtype=bool) & np.isfinite(xy_values).all(axis=-1)
+    xyz[finite_mask, :2] = xy_values[finite_mask].astype(np.float32)
+    xyz[finite_mask, 2] = 0.0
+    return xyz
+
+
+def _rebuild_motion_scenario_from_record(record: dict[str, Any]) -> MotionScenario:
+    agent_ids = list(record["agent_ids"])
+    agent_positions = np.asarray(record["agent_positions"], dtype=np.float32)
+    agent_velocities = np.asarray(record["agent_velocities"], dtype=np.float32)
+    agent_headings = np.asarray(record["agent_headings"], dtype=np.float32)
+    agent_valid_mask = np.asarray(record["agent_valid_mask"], dtype=bool)
+    agent_observed_mask = np.asarray(record["agent_observed_mask"], dtype=bool)
+    agent_types = np.asarray(record["agent_types"], dtype=np.int64)
+    agent_is_ego = np.asarray(record["agent_is_ego"], dtype=bool)
+    agent_is_target = np.asarray(record["agent_is_target"], dtype=bool)
+    agent_is_interest = np.asarray(record["agent_is_interest"], dtype=bool)
+
+    agent_size = record.get("agent_size")
+    agent_size_valid_mask = record.get("agent_size_valid_mask")
+    if agent_size is None:
+        agent_size = np.zeros((len(agent_ids), 3), dtype=np.float32)
+    else:
+        agent_size = np.asarray(agent_size, dtype=np.float32)
+    if agent_size_valid_mask is None:
+        agent_size_valid_mask = np.zeros((len(agent_ids),), dtype=bool)
+    else:
+        agent_size_valid_mask = np.asarray(agent_size_valid_mask, dtype=bool)
+
+    tracks: list[MotionTrack] = []
+    for agent_idx, track_id in enumerate(agent_ids):
+        sizes = np.full((agent_positions.shape[1], 3), np.nan, dtype=np.float32)
+        if agent_idx < agent_size.shape[0] and agent_size_valid_mask[agent_idx]:
+            sizes[:] = agent_size[agent_idx]
+
+        tracks.append(
+            MotionTrack(
+                track_id=str(track_id),
+                object_type=CANONICAL_AGENT_TYPES[int(agent_types[agent_idx])],
+                category=None,
+                positions=_xy_to_xyz(agent_positions[agent_idx], agent_valid_mask[agent_idx]),
+                headings=agent_headings[agent_idx].astype(np.float32),
+                velocities=_xy_to_xyz(
+                    agent_velocities[agent_idx],
+                    np.isfinite(agent_velocities[agent_idx]).all(axis=-1),
+                ),
+                sizes=sizes,
+                valid_mask=agent_valid_mask[agent_idx],
+                observed_mask=agent_observed_mask[agent_idx],
+                is_ego=bool(agent_is_ego[agent_idx]),
+                is_focal=False,
+                is_prediction_target=bool(agent_is_target[agent_idx]),
+                is_object_of_interest=bool(agent_is_interest[agent_idx]),
+                metadata={"standardized": True},
+            )
+        )
+
+    map_ids = list(record["map_ids"])
+    map_types = np.asarray(record["map_types"], dtype=np.int64)
+    map_points = np.asarray(record["map_points"], dtype=np.float32)
+    map_valid_mask = np.asarray(record["map_valid_mask"], dtype=bool)
+    map_is_intersection = np.asarray(record["map_is_intersection"], dtype=bool)
+
+    lane_segments: list[MotionLaneSegment] = []
+    road_lines: list[MotionPolylineFeature] = []
+    road_edges: list[MotionPolylineFeature] = []
+    map_feature_records: list[_StandardizedMapFeatureRecord] = []
+
+    for feature_idx, feature_id in enumerate(map_ids):
+        valid_points = map_points[feature_idx][map_valid_mask[feature_idx]].astype(np.float32)
+        if valid_points.shape[0] < 2:
+            continue
+
+        feature_type = CANONICAL_MAP_TYPES[int(map_types[feature_idx])]
+        is_intersection = bool(map_is_intersection[feature_idx])
+        map_feature_records.append(
+            _StandardizedMapFeatureRecord(
+                feature_id=str(feature_id),
+                feature_type=feature_type,
+                points=valid_points,
+                is_intersection=is_intersection,
+            )
+        )
+
+        if feature_type == "lane_centerline":
+            lane_segments.append(
+                MotionLaneSegment(
+                    lane_id=str(feature_id),
+                    centerline=valid_points,
+                    is_intersection=is_intersection,
+                    metadata={"standardized": True},
+                )
+            )
+        elif feature_type == "road_edge":
+            road_edges.append(
+                MotionPolylineFeature(
+                    feature_id=str(feature_id),
+                    feature_type=feature_type,
+                    points=valid_points,
+                    metadata={"standardized": True},
+                )
+            )
+        else:
+            road_lines.append(
+                MotionPolylineFeature(
+                    feature_id=str(feature_id),
+                    feature_type=feature_type,
+                    points=valid_points,
+                    metadata={"standardized": True},
+                )
+            )
+
+    standardization_metadata = dict(record["standardization_metadata"])
+    standardization_metadata["map_feature_records"] = tuple(map_feature_records)
+
+    metadata = dict(record.get("metadata", {}))
+    metadata["standardization"] = standardization_metadata
+
+    sdc_track_id = next(
+        (track.track_id for track in tracks if track.is_ego),
+        None,
+    )
+
+    return MotionScenario(
+        scenario_id=str(record["scenario_id"]),
+        source=normalize_source_name(record["source"]),
+        split=normalize_split_name(record["split"]),
+        timestamps_seconds=np.asarray(record["timestamps_seconds"], dtype=np.float32),
+        current_time_index=int(record["current_time_index"]),
+        tracks=tracks,
+        lane_segments=lane_segments,
+        road_lines=road_lines,
+        road_edges=road_edges,
+        city_name=record.get("city_name"),
+        focal_track_id=record.get("primary_target_track_id"),
+        sdc_track_id=sdc_track_id,
+        metadata=metadata,
+    )
+
+
 class _SimplMotionDataset(Dataset):
     def __init__(
         self,
@@ -282,6 +436,7 @@ class _SimplMotionDataset(Dataset):
         agent_score_types: list[list[str]] = []
         rpe_list: list[torch.Tensor] = []
         metadata: list[dict[str, Any]] = []
+        motion_samples: list[MotionScenario] = []
 
         for batch_idx, item in enumerate(batch):
             num_agents = item["agent_history"].shape[0]
@@ -310,6 +465,7 @@ class _SimplMotionDataset(Dataset):
             agent_score_types.append(item["agent_score_types"])
             rpe_list.append(item["rpe"])
             metadata.append(item["metadata"])
+            motion_samples.append(item["motion_sample"])
 
         focal_agent_point = torch.stack([item["focal_agent_point"] for item in batch], dim=0)
         focal_agent_rotation = torch.stack(
@@ -339,6 +495,7 @@ class _SimplMotionDataset(Dataset):
             "scenario_id": scenario_ids,
             "city": cities,
             "metadata": metadata,
+            "motion_samples": motion_samples,
         }
 
     def _record_to_sample(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -496,6 +653,7 @@ class _SimplMotionDataset(Dataset):
             "scenario_id": str(record["scenario_id"]),
             "city": record.get("city_name"),
             "metadata": dict(record.get("metadata", {})),
+            "motion_sample": _rebuild_motion_scenario_from_record(record),
         }
 
     def _build_map_features(

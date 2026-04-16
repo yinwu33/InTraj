@@ -17,6 +17,18 @@ class SimplLightningModule(pl.LightningModule):
     def forward(self, batch: dict) -> torch.Tensor:
         return self.model(batch)
 
+    def transfer_batch_to_device(self, batch, device, dataloader_idx):
+        if not isinstance(batch, dict) or "motion_samples" not in batch:
+            return super().transfer_batch_to_device(batch, device, dataloader_idx)
+
+        batch_on_device = dict(batch)
+        motion_samples = batch_on_device.pop("motion_samples")
+        batch_on_device = super().transfer_batch_to_device(
+            batch_on_device, device, dataloader_idx
+        )
+        batch_on_device["motion_samples"] = motion_samples
+        return batch_on_device
+
     def training_step(self, batch, batch_idx):
         out = self.model(batch)  # out = (res_cls, res_reg, res_aux)
         # post_out = self.model.post_process(out)

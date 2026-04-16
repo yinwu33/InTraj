@@ -12,6 +12,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from pytorch_lightning.profilers import AdvancedProfiler
 
+from callbacks.motion_viz import MotionVizCallback
 from callbacks.viz import TrajectoryVisualizationCallback
 
 
@@ -34,6 +35,9 @@ def build_callbacks(cfg: DictConfig) -> list[pl.Callback]:
 
     viz = TrajectoryVisualizationCallback(every_n_epochs=1)
     callbacks.append(viz)
+
+    motion_viz = MotionVizCallback(every_n_epochs=1)
+    callbacks.append(motion_viz)
 
     return callbacks
 
