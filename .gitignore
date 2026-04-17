@@ -14,3 +14,5 @@ reference/
 
 .codex
 .env
+
+.venv
